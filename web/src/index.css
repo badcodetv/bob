@@ -1,14 +1,25 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/schibsted-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
 @import "tw-shimmer";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    --font-sans: 'Schibsted Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono Variable', ui-monospace, Menlo, Consolas, monospace;
+    --color-faint: var(--faint);
+    --color-cobalt: var(--cobalt);
+    --color-cobalt-soft: var(--cobalt-soft);
+    --color-code: var(--code);
+    --color-warn: var(--warn);
+    --color-engine-claude: var(--engine-claude);
+    --color-engine-codex: var(--engine-codex);
+    --color-engine-opencode: var(--engine-opencode);
+    --color-badge-ink: var(--badge-ink);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -66,72 +77,87 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    /* Bob's palette: cool paper and ink. Cobalt means alive (a running turn, the primary action,
+       focus); the engine colours appear only on a worker's badge. */
+    --background: #F5F6F3;
+    --foreground: #1B1F24;
+    --card: #FFFFFF;
+    --card-foreground: #1B1F24;
+    --popover: #FFFFFF;
+    --popover-foreground: #1B1F24;
+    --primary: #2F45C8;
+    --primary-foreground: #F5F6F3;
+    --secondary: #E0E3DC;
+    --secondary-foreground: #1B1F24;
+    --muted: #E0E3DC;
+    --muted-foreground: #555C63;
+    --faint: #858B90;
+    --accent: #E5E8E1;
+    --accent-foreground: #1B1F24;
+    --destructive: #B42318;
+    --warn: #9A5B00;
+    --border: #D9DDD6;
+    --input: #D9DDD6;
+    --ring: #2F45C8;
+    --cobalt: #2F45C8;
+    --cobalt-soft: #DDE1F7;
+    --code: #E9ECE6;
+    --engine-claude: #B7791F;
+    --engine-codex: #0F7B62;
+    --engine-opencode: #6B47C2;
+    --badge-ink: #FFFFFF;
+    --chart-1: #2F45C8;
+    --chart-2: #0F7B62;
+    --chart-3: #B7791F;
+    --chart-4: #6B47C2;
+    --chart-5: #555C63;
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar: #ECEEE9;
+    --sidebar-foreground: #1B1F24;
+    --sidebar-primary: #2F45C8;
+    --sidebar-primary-foreground: #F5F6F3;
+    --sidebar-accent: #E0E3DC;
+    --sidebar-accent-foreground: #1B1F24;
+    --sidebar-border: #D9DDD6;
+    --sidebar-ring: #2F45C8;
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: #16191D;
+    --foreground: #E6E8E3;
+    --card: #22272D;
+    --card-foreground: #E6E8E3;
+    --popover: #22272D;
+    --popover-foreground: #E6E8E3;
+    --primary: #8C9CFF;
+    --primary-foreground: #16191D;
+    --secondary: #2A3036;
+    --secondary-foreground: #E6E8E3;
+    --muted: #2A3036;
+    --muted-foreground: #A9AFB4;
+    --faint: #7A8086;
+    --accent: #252A30;
+    --accent-foreground: #E6E8E3;
+    --destructive: #F07366;
+    --warn: #E0A43A;
+    --border: #2D3238;
+    --input: #2D3238;
+    --ring: #8C9CFF;
+    --cobalt: #8C9CFF;
+    --cobalt-soft: #262C4A;
+    --code: #242A30;
+    --engine-claude: #D9A04A;
+    --engine-codex: #3FB28F;
+    --engine-opencode: #A38BEA;
+    --badge-ink: #16191D;
+    --sidebar: #1C2025;
+    --sidebar-foreground: #E6E8E3;
+    --sidebar-primary: #8C9CFF;
+    --sidebar-primary-foreground: #16191D;
+    --sidebar-accent: #2A3036;
+    --sidebar-accent-foreground: #E6E8E3;
+    --sidebar-border: #2D3238;
+    --sidebar-ring: #8C9CFF;
 }
 
 @layer base {
@@ -144,8 +170,18 @@
   html {
     @apply font-sans;
     }
+  :focus-visible {
+    outline: 2px solid var(--cobalt);
+    outline-offset: 2px;
+    }
 }
 
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
 
 @custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
+@keyframes bob-pulse {
+  50% { box-shadow: 0 0 0 5px var(--cobalt-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

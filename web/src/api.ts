@@ -3,7 +3,11 @@
 export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; created_at: string }
 export interface Worker { name: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string }
 export interface WorkerList { sync: { ok: boolean; commit?: string; error?: string }; workers: Worker[]; error?: string }
-export interface Session { id: string; project: string; worker: string; engine: string; harness_session_id: string; model: string; effort: string; created_at: string }
+export interface Session {
+  id: string; project: string; worker: string; engine: string; harness_session_id: string; model: string; effort: string; created_at: string
+  // Only on the project's session list: the first message, messages sent, and the last activity.
+  title?: string; messages?: number; last_active_at?: string
+}
 export interface Settings { model: string; effort: string }
 export interface BobEvent { id: number; session_id: string; engine: string; kind: string; payload: any; created_at: string }
 

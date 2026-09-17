@@ -137,6 +137,11 @@ type Session struct {
 	Model     string    `json:"model"`
 	Effort    string    `json:"effort"`
 	CreatedAt time.Time `json:"created_at"`
+	// Filled only by Sessions (the list): the first message, how many messages the user has
+	// sent, and when anything last happened, so a chat can be named and sorted by activity.
+	Title        string     `json:"title,omitempty"`
+	Messages     int        `json:"messages,omitempty"`
+	LastActiveAt *time.Time `json:"last_active_at,omitempty"`
 }
 
 const sessionCols = `id, project, worker, engine, harness_session_id, model, effort, created_at`
@@ -174,12 +179,25 @@ func (s *Store) Session(ctx context.Context, id string) (Session, error) {
 	return scanSession(s.db.QueryRow(ctx, `SELECT `+sessionCols+` FROM sessions WHERE id = $1`, id))
 }
 
+// Sessions lists a project's sessions, most recently active first, each with its title (the
+// first user message), message count and last activity.
 func (s *Store) Sessions(ctx context.Context, project string) ([]Session, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+sessionCols+` FROM sessions WHERE project = $1 ORDER BY created_at DESC`, project)
+	rows, err := s.db.Query(ctx, `SELECT s.id, s.project, s.worker, s.engine, s.harness_session_id, s.model, s.effort, s.created_at,
+			COALESCE((SELECT e.payload->>'text' FROM events e WHERE e.session_id = s.id AND e.kind = 'bob.user_message' ORDER BY e.id LIMIT 1), ''),
+			(SELECT count(*) FROM events e WHERE e.session_id = s.id AND e.kind = 'bob.user_message'),
+			COALESCE((SELECT max(e.created_at) FROM events e WHERE e.session_id = s.id), s.created_at) AS last_active
+		FROM sessions s WHERE s.project = $1 ORDER BY last_active DESC`, project)
 	if err != nil {
 		return nil, err
 	}
-	return collect(rows, scanSession)
+	return collect(rows, func(row pgx.Row) (Session, error) {
+		var x Session
+		var last time.Time
+		err := row.Scan(&x.ID, &x.Project, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt,
+			&x.Title, &x.Messages, &last)
+		x.LastActiveAt = &last
+		return x, err
+	})
 }
 
 func (s *Store) SetHarnessSessionID(ctx context.Context, id, harnessID string) error {

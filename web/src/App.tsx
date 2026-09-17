@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { api, Unauthorized, type Project, type Session, type Worker, type WorkerList } from './api'
 import { Chat, NewChat } from './Chat'
-import { ProjectSettings } from './ProjectSettings'
+import { Overview } from './Overview'
+import { Sidebar } from './Sidebar'
+import { DrawerContext } from './ui'
+import { cn } from '@/lib/utils'
 
-// Routes are the URL hash: #/ · #/p/<project> · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
+// Routes are the URL hash: #/ · #/p/<project> (its overview) · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
 function useHash() {
   const [hash, setHash] = useState(window.location.hash.slice(1) || '/')
   useEffect(() => {
@@ -25,162 +26,118 @@ export default function App() {
   return <Signed email={config.email} onSignedOut={() => setConfig({ ...config, email: '' })} />
 }
 
+/** What the sidebar says the project is doing right now. */
+export type Activity = '' | 'starting' | 'syncing'
+
 function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void }) {
   const hash = useHash()
   const [, , project, mode, id] = hash.split('/')
   const session = mode === 's' ? id : undefined
   const newWorker = mode === 'new' ? id : undefined
-  const [sessionsVersion, setSessionsVersion] = useState(0)
-  const [projectsVersion, setProjectsVersion] = useState(0)
-  const [workers, setWorkers] = useState<WorkerList | null>(null)
-  useEffect(() => { setWorkers(null) }, [project])
-  const findWorker = (name?: string) => workers?.workers.find((w) => w.name === name)
+  const [drawer, setDrawer] = useState(false)
+  useEffect(() => { setDrawer(false) }, [hash])
+
   const guard = useCallback((err: unknown) => {
     if (err instanceof Unauthorized) onSignedOut()
     else alert(String((err as Error)?.message ?? err))
   }, [onSignedOut])
 
-  return (
-    <div className="flex h-screen">
-      <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r p-4 text-sm">
-        <a href="#/" className="text-lg font-semibold">Bob</a>
-        <Projects current={project} version={projectsVersion} onError={guard} />
-        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} workers={workers} onWorkers={setWorkers} onError={guard}
-          onProjectDeleted={() => { setProjectsVersion((v) => v + 1); window.location.hash = '/' }} />}
-        <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
-          <span className="truncate">{email}</span>
-          <Button variant="ghost" size="sm" onClick={() => api.logout().then(onSignedOut)}>Sign out</Button>
-        </div>
-      </aside>
-      <main className="min-w-0 flex-1">
-        {session ? <SessionView id={session} findWorker={findWorker} onError={guard} onDeleted={() => {
-              setSessionsVersion((v) => v + 1)
-              window.location.hash = `/p/${project}`
-            }} />
-          : project && newWorker ? <NewChat key={newWorker} project={project} worker={findWorker(newWorker)} onCreated={(s) => {
-              setSessionsVersion((v) => v + 1)
-              window.location.hash = `/p/${project}/s/${s.id}`
-            }} />
-          : <Empty project={project} />}
-      </main>
-    </div>
-  )
-}
-
-function Empty({ project }: { project?: string }) {
-  return (
-    <div className="flex h-full items-center justify-center text-muted-foreground">
-      {project ? 'Pick a worker to start a chat.' : 'Pick or create a project.'}
-    </div>
-  )
-}
-
-function Projects({ current, version, onError }: { current?: string; version: number; onError: (e: unknown) => void }) {
   const [projects, setProjects] = useState<Project[]>([])
-  const [creating, setCreating] = useState(false)
-  const load = useCallback(() => api.projects().then(setProjects).catch(onError), [onError])
-  useEffect(() => { load() }, [load, version])
+  const loadProjects = useCallback(() => api.projects().then(setProjects).catch(guard), [guard])
+  useEffect(() => { loadProjects() }, [loadProjects])
 
-  return (
-    <section className="flex flex-col gap-1">
-      <h2 className="text-xs font-medium uppercase text-muted-foreground">Projects</h2>
-      {projects.map((p) => (
-        <a key={p.name} href={`#/p/${p.name}`} className={`rounded px-2 py-1 hover:bg-muted ${p.name === current ? 'bg-muted font-medium' : ''}`}>{p.name}</a>
-      ))}
-      {creating
-        ? <CreateProject onDone={(name) => { setCreating(false); if (name) { load(); window.location.hash = `/p/${name}` } }} onError={onError} />
-        : <Button variant="outline" size="sm" onClick={() => setCreating(true)}>New project</Button>}
-    </section>
-  )
-}
-
-function CreateProject({ onDone, onError }: { onDone: (name?: string) => void; onError: (e: unknown) => void }) {
-  const [form, setForm] = useState({ name: '', repo_url: '', repo_ref: 'main', subfolder: '' })
-  const field = (key: keyof typeof form, placeholder: string) => (
-    <Input placeholder={placeholder} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
-  )
-  return (
-    <form className="flex flex-col gap-2 rounded border p-2" onSubmit={(e) => {
-      e.preventDefault()
-      api.createProject(form).then((p) => onDone(p.name)).catch(onError)
-    }}>
-      {field('name', 'name (a-z, 0-9, -)')}
-      {field('repo_url', 'https://github.com/org/repo')}
-      {field('repo_ref', 'branch')}
-      {field('subfolder', 'subfolder (optional)')}
-      <div className="flex gap-2">
-        <Button type="submit" size="sm">Create</Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => onDone()}>Cancel</Button>
-      </div>
-    </form>
-  )
-}
-
-function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, workers: list, onWorkers: setList, onError, onProjectDeleted }: {
-  project: string; currentSession?: string; currentWorker?: string; sessionsVersion: number
-  workers: WorkerList | null; onWorkers: (l: WorkerList) => void; onError: (e: unknown) => void; onProjectDeleted: () => void
-}) {
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // The open project's workers and chats, shared by the sidebar and the overview.
+  const [workers, setWorkers] = useState<WorkerList | null>(null)
+  const [syncedAt, setSyncedAt] = useState<Date>()
+  const [activity, setActivity] = useState<Activity>('')
   const [sessions, setSessions] = useState<Session[]>([])
-  const [busy, setBusy] = useState('')
 
-  const loadSessions = useCallback(() => api.sessions(project).then(setSessions).catch(onError), [project, onError])
+  const loadSessions = useCallback(() => {
+    if (project) api.sessions(project).then(setSessions).catch(guard)
+  }, [project, guard])
+
   useEffect(() => {
-    setBusy('Starting project…')
-    api.workers(project).then(setList).catch(onError).finally(() => setBusy(''))
-  }, [project, onError, setList])
-  useEffect(() => { loadSessions() }, [loadSessions, sessionsVersion])
+    setWorkers(null)
+    setSessions([])
+    if (!project) return
+    setActivity('starting')
+    api.workers(project).then((l) => { setWorkers(l); setSyncedAt(new Date()) }).catch(guard).finally(() => setActivity(''))
+    loadSessions()
+  }, [project, guard, loadSessions])
 
-  const sync = () => {
-    setBusy('Pulling from git…')
-    api.sync(project).then(setList).catch(onError).finally(() => setBusy(''))
-  }
+  const sync = useCallback(() => {
+    if (!project) return
+    setActivity('syncing')
+    api.sync(project).then((l) => { setWorkers(l); setSyncedAt(new Date()) }).catch(guard).finally(() => setActivity(''))
+  }, [project, guard])
+
+  const findWorker = (name?: string) => workers?.workers.find((w) => w.name === name)
 
   return (
-    <>
-      <div className="flex items-center justify-between border-t pt-3">
-        <span className="font-medium">{project}</span>
-        <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>
-      </div>
-      <ProjectSettings name={project} open={settingsOpen} onOpenChange={setSettingsOpen} onError={onError}
-        onSaved={sync} onDeleted={onProjectDeleted} />
-      <section className="flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase text-muted-foreground">Workers</h2>
-          <Button variant="ghost" size="sm" onClick={sync} disabled={!!busy}>Sync git</Button>
+    <DrawerContext.Provider value={() => setDrawer(true)}>
+      <div className="flex h-dvh">
+        <div className={cn(
+          'fixed inset-y-0 left-0 z-40 w-[min(300px,86vw)] -translate-x-full transition-transform duration-200 md:static md:z-auto md:w-68 md:translate-x-0 md:transition-none',
+          drawer && 'translate-x-0',
+        )}>
+          <Sidebar email={email} projects={projects} project={project} workers={workers} sessions={sessions}
+            activity={activity} syncedAt={syncedAt} currentSession={session} currentWorker={newWorker}
+            onOverview={!session && !newWorker} onSync={sync} onError={guard}
+            onProjectCreated={(name) => { loadProjects(); window.location.hash = `/p/${name}` }}
+            onSignOut={() => api.logout().then(onSignedOut)} />
         </div>
-        {busy && <p className="text-xs text-muted-foreground">{busy}</p>}
-        {list && !list.sync.ok && <p className="text-xs text-destructive">git: {list.sync.error}</p>}
-        {list?.sync.commit && <p className="truncate text-xs text-muted-foreground" title={list.sync.commit}>at {list.sync.commit}</p>}
-        {list?.error && <p className="text-xs text-destructive">{list.error}</p>}
-        {list?.workers.map((w) => (
-          <a key={w.name} href={`#/p/${project}/new/${w.name}`} title={w.prompt}
-            className={`flex items-center justify-between rounded px-2 py-1 hover:bg-muted ${w.name === currentWorker ? 'bg-muted font-medium' : ''}`}>
-            <span>{w.name}</span>
-            <span className="text-xs text-muted-foreground">{w.engine}{w.model ? ` · ${w.model}` : ''}</span>
-          </a>
-        ))}
-        {list && list.sync.ok && list.workers.length === 0 && <p className="text-xs text-muted-foreground">No workers/*.md in this folder yet.</p>}
-      </section>
-      <section className="flex flex-col gap-1">
-        <h2 className="text-xs font-medium uppercase text-muted-foreground">Chats</h2>
-        {sessions.map((s) => (
-          <a key={s.id} href={`#/p/${project}/s/${s.id}`}
-            className={`rounded px-2 py-1 hover:bg-muted ${s.id === currentSession ? 'bg-muted font-medium' : ''}`}>
-            {s.worker}{s.model ? ` · ${s.model.replace('claude-', '')}` : ''} <span className="text-xs text-muted-foreground">{new Date(s.created_at).toLocaleString()}</span>
-          </a>
-        ))}
-      </section>
-    </>
+        {drawer && <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setDrawer(false)} />}
+
+        <main className="min-w-0 flex-1">
+          {session ? <SessionView id={session} findWorker={findWorker} onError={guard} onChanged={loadSessions} onDeleted={() => {
+                loadSessions()
+                window.location.hash = `/p/${project}`
+              }} />
+            : project && newWorker ? <NewChat key={newWorker} project={project} worker={findWorker(newWorker)} loading={!workers} onCreated={(s) => {
+                loadSessions()
+                window.location.hash = `/p/${project}/s/${s.id}`
+              }} />
+            : project ? <Overview key={project} name={project} workers={workers} sessions={sessions} activity={activity}
+                syncedAt={syncedAt} onSync={sync} onError={guard}
+                onDeleted={() => { loadProjects(); window.location.hash = '/' }} />
+            : <Home projects={projects} />}
+        </main>
+      </div>
+    </DrawerContext.Provider>
   )
 }
 
-function SessionView({ id, findWorker, onError, onDeleted }: {
-  id: string; findWorker: (name?: string) => Worker | undefined; onError: (e: unknown) => void; onDeleted: () => void
+function Home({ projects }: { projects: Project[] }) {
+  return (
+    <div className="flex h-full flex-col justify-center gap-3 px-6">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-3">
+        <h1 className="text-3xl font-semibold tracking-tight">Pick a project</h1>
+        <p className="text-muted-foreground">
+          {projects.length
+            ? 'Choose one from the menu at the top of the sidebar, or open one here.'
+            : 'There are no projects yet. Create one from the menu at the top of the sidebar.'}
+        </p>
+        <ul className="flex flex-col">
+          {projects.map((p) => (
+            <li key={p.name} className="border-t first:border-t-0">
+              <a href={`#/p/${p.name}`} className="hover:bg-accent -mx-2 flex items-baseline justify-between rounded-lg px-2 py-2.5">
+                <span className="text-[15px] font-medium">{p.name}</span>
+                <span className="text-faint truncate pl-4 font-mono text-xs">{p.repo_url.replace(/^https:\/\//, '')}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+function SessionView({ id, findWorker, onError, onChanged, onDeleted }: {
+  id: string; findWorker: (name?: string) => Worker | undefined; onError: (e: unknown) => void; onChanged: () => void; onDeleted: () => void
 }) {
   const [session, setSession] = useState<Session | null>(null)
   useEffect(() => { api.session(id).then(setSession).catch(onError) }, [id, onError])
-  return session ? <Chat key={session.id} session={session} workerDefaults={findWorker(session.worker)} onDeleted={onDeleted} /> : null
+  return session ? <Chat key={session.id} session={session} worker={findWorker(session.worker)} onSent={onChanged} onDeleted={onDeleted} /> : null
 }
 
 declare global {
@@ -204,10 +161,11 @@ function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: (email
     return () => { script.remove() }
   }, [clientId, onSignedIn])
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-4">
-      <h1 className="text-2xl font-semibold">Bob</h1>
+    <div className="flex h-dvh flex-col items-center justify-center gap-5 px-6">
+      <h1 className="text-4xl font-bold tracking-tight">Bob</h1>
+      <p className="text-muted-foreground">Sign in with your BadCode Google account.</p>
       <div id="google-button" />
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
     </div>
   )
 }

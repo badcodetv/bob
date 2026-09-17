@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AssistantRuntimeProvider, useExternalStoreRuntime, type ThreadMessageLike } from '@assistant-ui/react'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { Thread } from '@/components/assistant-ui/elements/thread.aui'
+import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui'
 import { api, type BobEvent, type Session, type Settings, type Worker } from './api'
 import { ChatHeader } from './ChatHeader'
 import { claudeDelta, claudeMessages } from './engines/claude'
+import { TrailGroup, TrailStep } from './Trail'
+import { engineName, prettyModel, WorkerBadge } from './ui'
+
+const trail: ThreadComponents = { ToolGroup: TrailGroup, ToolFallback: TrailStep }
 
 // One converter per engine. An engine without one shows its events raw.
 function toMessages(engine: string, events: BobEvent[], live: string): ThreadMessageLike[] {
@@ -16,7 +20,7 @@ function toMessages(engine: string, events: BobEvent[], live: string): ThreadMes
   }))
 }
 
-export function Chat({ session: initial, workerDefaults, onDeleted }: { session: Session; workerDefaults?: Worker; onDeleted: () => void }) {
+export function Chat({ session: initial, worker, onSent, onDeleted }: { session: Session; worker?: Worker; onSent: () => void; onDeleted: () => void }) {
   const [session, setSession] = useState(initial)
   const [events, setEvents] = useState<BobEvent[]>([])
   const [live, setLive] = useState('')
@@ -55,10 +59,14 @@ export function Chat({ session: initial, workerDefaults, onDeleted }: { session:
     convertMessage: (m) => m,
     onNew: async (m) => {
       const text = m.content.map((p) => (p.type === 'text' ? p.text : '')).join('')
-      if (text.trim()) await api.send(session.id, text)
+      if (!text.trim()) return
+      await api.send(session.id, text)
+      onSent()
     },
     onCancel: async () => { await api.interrupt(session.id) },
   })
+
+  const title = useMemo(() => events.find((e) => e.kind === 'bob.user_message')?.payload.text as string | undefined, [events])
 
   const change = (settings: Settings) =>
     api.updateSession(session.id, settings).then(setSession).catch((e) => alert(e.message))
@@ -66,12 +74,12 @@ export function Chat({ session: initial, workerDefaults, onDeleted }: { session:
 
   return (
     <div className="flex h-full flex-col">
-      <ChatHeader worker={session.worker} engine={session.engine} workerDefaults={workerDefaults}
+      <ChatHeader worker={session.worker} engine={session.engine} title={title} workerDefaults={worker}
         settings={{ model: session.model, effort: session.effort }} onChange={change} onDelete={remove} />
       <div className="min-h-0 flex-1">
         <TooltipProvider>
           <AssistantRuntimeProvider runtime={runtime}>
-            <Thread />
+            <Thread components={trail} placeholder={`Message ${session.worker}…`} />
           </AssistantRuntimeProvider>
         </TooltipProvider>
       </div>
@@ -83,7 +91,7 @@ export function Chat({ session: initial, workerDefaults, onDeleted }: { session:
  * A chat that does not exist yet. Picking a worker opens this; the session is only created
  * when the first message is sent, so browsing workers leaves no empty chats behind.
  */
-export function NewChat({ project, worker, onCreated }: { project: string; worker?: Worker; onCreated: (s: Session) => void }) {
+export function NewChat({ project, worker, loading, onCreated }: { project: string; worker?: Worker; loading: boolean; onCreated: (s: Session) => void }) {
   const [pending, setPending] = useState<string | null>(null)
   const [settings, setSettings] = useState<Settings>({ model: '', effort: '' })
   const messages = useMemo<ThreadMessageLike[]>(
@@ -115,10 +123,28 @@ export function NewChat({ project, worker, onCreated }: { project: string; worke
       <div className="min-h-0 flex-1">
         <TooltipProvider>
           <AssistantRuntimeProvider runtime={runtime}>
-            <Thread />
+            <Thread components={{ ...trail, Welcome: () => <Welcome worker={worker} loading={loading} /> }}
+              placeholder={worker ? `Message ${worker.name}…` : 'Send a message…'} />
           </AssistantRuntimeProvider>
         </TooltipProvider>
       </div>
+    </div>
+  )
+}
+
+function Welcome({ worker, loading }: { worker?: Worker; loading: boolean }) {
+  if (!worker) {
+    return <p className="text-muted-foreground mb-6 px-2">{loading ? 'Loading workers…' : 'This worker is not in the project any more. Pick another from the sidebar.'}</p>
+  }
+  return (
+    <div className="mb-8 flex max-w-xl flex-col gap-3.5 px-2">
+      <WorkerBadge name={worker.name} engine={worker.engine} size="lg" />
+      <h1 className="text-3xl leading-tight font-semibold tracking-[-0.025em] text-balance">New chat with {worker.name}</h1>
+      <p className="text-muted-foreground border-l-2 py-0.5 pl-3 text-sm line-clamp-4">{worker.prompt}</p>
+      <p className="text-faint text-[13px]">
+        {engineName(worker.engine)}{worker.model ? `, ${prettyModel(worker.model)}` : ''}{worker.effort ? `, ${worker.effort} effort` : ''}.
+        This chat gets its own branch of the project repository.
+      </p>
     </div>
   )
 }

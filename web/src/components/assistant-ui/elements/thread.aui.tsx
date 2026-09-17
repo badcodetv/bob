@@ -120,6 +120,7 @@ const taskAwareGroupBy = (
 export type ThreadProps = {
   components?: ThreadComponents | undefined;
   autoFocus?: boolean | undefined;
+  placeholder?: string | undefined;
 };
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
@@ -164,19 +165,21 @@ const ThreadHistorySkeleton: FC = () => (
 export const Thread: FC<ThreadProps> = ({
   components = EMPTY_COMPONENTS,
   autoFocus = true,
+  placeholder = "Send a message…",
 }) => {
   const isEmpty = useAuiState(isNewChatView);
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} />
+      <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} placeholder={placeholder} />
     </ThreadComponentsContext.Provider>
   );
 };
 
-const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
+const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean; placeholder: string }> = ({
   isEmpty,
   autoFocus,
+  placeholder,
 }) => {
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
 
@@ -185,10 +188,9 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       style={{
         ["--thread-max-width" as string]: "44rem",
-        ["--composer-bg" as string]:
-          "color-mix(in oklab, var(--color-muted) 30%, transparent)",
-        ["--composer-radius" as string]: "1rem",
-        ["--composer-padding" as string]: "8px",
+        ["--composer-bg" as string]: "var(--color-card)",
+        ["--composer-radius" as string]: "14px",
+        ["--composer-padding" as string]: "6px",
       }}
     >
       <ThreadPrimitive.Viewport
@@ -198,7 +200,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
+            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-6 md:pt-9",
             isEmpty && "justify-center",
           )}
         >
@@ -211,7 +213,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
 
           <div
             data-slot="aui_message-group"
-            className="mb-14 flex flex-col gap-y-6 empty:hidden"
+            className="mb-14 flex flex-col gap-y-7 empty:hidden"
           >
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
@@ -227,7 +229,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
           >
             <ThreadScrollToBottom />
             <ThreadFollowupSuggestions />
-            <Composer autoFocus={autoFocus} />
+            <Composer autoFocus={autoFocus} placeholder={placeholder} />
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
             </AuiIf>
@@ -389,12 +391,12 @@ const ThreadSuggestionItem: FC = () => {
   );
 };
 
-const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
+const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, placeholder }) => {
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]" />}><ComposerAttachments /><ComposerPrimitive.Input
-                      placeholder="Send a message..."
-                      className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
+      <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="border-border focus-within:border-cobalt focus-within:ring-3 focus-within:ring-cobalt-soft data-[dragging=true]:border-ring flex w-full cursor-text flex-row flex-wrap items-end gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]" />}><ComposerAttachments /><ComposerPrimitive.Input
+                      placeholder={placeholder}
+                      className="aui-composer-input caret-primary placeholder:text-faint order-2 max-h-48 min-h-9 min-w-0 flex-1 resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-6 outline-none"
                       rows={1}
                       autoFocus={autoFocus}
                       enterKeyHint="send"
@@ -406,9 +408,9 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
 
 const ComposerAction: FC = () => {
   return (
-    <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <ComposerAddAttachment />
-      <div className="flex items-center gap-1.5">
+    <div className="aui-composer-action-wrapper contents">
+      <div className="order-1 flex h-8 items-center"><ComposerAddAttachment /></div>
+      <div className="order-3 flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate render={<TooltipIconButton tooltip="Voice input" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-dictate text-muted-foreground hover:text-foreground size-7 rounded-full" aria-label="Start voice input" />}><MicIcon className="aui-composer-dictate-icon size-4" /></ComposerPrimitive.Dictate>
@@ -418,10 +420,10 @@ const ComposerAction: FC = () => {
           </AuiIf>
         </AuiIf>
         <AuiIf condition={(s) => !s.thread.isRunning}>
-          <ComposerPrimitive.Send render={<TooltipIconButton tooltip="Send message" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-7 rounded-full" aria-label="Send message" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
+          <ComposerPrimitive.Send render={<TooltipIconButton tooltip="Send message" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-8 rounded-[9px]" aria-label="Send message" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
         </AuiIf>
         <AuiIf condition={(s) => s.thread.isRunning}>
-          <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-7 rounded-full" aria-label="Stop generating" />}><SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" /></ComposerPrimitive.Cancel>
+          <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-8 rounded-[9px]" aria-label="Stop generating" />}><SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" /></ComposerPrimitive.Cancel>
         </AuiIf>
       </div>
     </div>
@@ -459,7 +461,7 @@ const AssistantMessage: FC = () => {
     >
       <div
         data-slot="aui_assistant-message-content"
-        className="text-foreground px-2 leading-relaxed wrap-break-word"
+        className="text-foreground px-2 text-base leading-[1.6] wrap-break-word"
       >
         <MessagePrimitive.GroupedParts groupBy={groupBy}>
           {({ part, children }) => {
@@ -597,7 +599,7 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
+        <div className="aui-user-message-content peer bg-muted text-foreground rounded-[14px_14px_4px_14px] px-3.5 py-2 text-[15.5px] wrap-break-word empty:hidden">
           <MessagePrimitive.Parts
             components={{ File: UserFilePart, Image: UserImagePart }}
           />
