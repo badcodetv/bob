@@ -35,6 +35,9 @@ func Open(ctx context.Context, url string) (*Store, error) {
 
 func (s *Store) Close() { s.db.Close() }
 
+// Ping checks the database answers.
+func (s *Store) Ping(ctx context.Context) error { return s.db.Ping(ctx) }
+
 // migrate applies every embedded migration not yet recorded, each in its own transaction.
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {

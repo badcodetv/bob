@@ -1,0 +1,14 @@
+#!/bin/sh
+# Build Bob's two images and push them to Artifact Registry, tagged with this repo's HEAD sha.
+#   scripts/publish            → europe-west1-docker.pkg.dev/webkit-servers/bob/{api,runtime}:<sha>
+# Refuses a dirty tree, so a tag always names committed code. Deploying is ops/scripts/deploy.
+set -eu
+cd "$(dirname "$0")/.."
+REGISTRY="${REGISTRY:-europe-west1-docker.pkg.dev/webkit-servers/bob}"
+[ -z "$(git status --porcelain)" ] || { echo "uncommitted changes: commit first so the tag names real code" >&2; exit 1; }
+TAG=$(git rev-parse --short HEAD)
+docker build -t "$REGISTRY/api:$TAG" .
+docker build -t "$REGISTRY/runtime:$TAG" runtime
+docker push "$REGISTRY/api:$TAG"
+docker push "$REGISTRY/runtime:$TAG"
+echo "published $TAG"

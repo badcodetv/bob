@@ -38,6 +38,10 @@ type ContainerSpec struct {
 	// PublishLoopback publishes container port Port on 127.0.0.1 at a port Docker picks.
 	PublishLoopback bool
 	Port            int
+	// Limits; zero means none.
+	Memory    int64 // bytes
+	NanoCPUs  int64 // CPUs × 1e9
+	PidsLimit int64
 }
 
 type ContainerState struct {
@@ -45,12 +49,14 @@ type ContainerState struct {
 	Running bool
 	// LoopbackPort is the host port published for ContainerSpec.Port on 127.0.0.1, or 0.
 	LoopbackPort string
+	Labels       map[string]string
 }
 
 func (c *Client) Inspect(ctx context.Context, name string) (ContainerState, error) {
 	var out struct {
 		ID              string
 		State           struct{ Running bool }
+		Config          struct{ Labels map[string]string }
 		NetworkSettings struct {
 			Ports map[string][]struct{ HostIP, HostPort string }
 		}
@@ -58,7 +64,7 @@ func (c *Client) Inspect(ctx context.Context, name string) (ContainerState, erro
 	if err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(name)+"/json", nil, &out); err != nil {
 		return ContainerState{}, err
 	}
-	st := ContainerState{ID: out.ID, Running: out.State.Running}
+	st := ContainerState{ID: out.ID, Running: out.State.Running, Labels: out.Config.Labels}
 	for _, bindings := range out.NetworkSettings.Ports {
 		for _, b := range bindings {
 			if b.HostIP == "127.0.0.1" {
@@ -81,6 +87,16 @@ func (c *Client) Create(ctx context.Context, s ContainerSpec) (string, error) {
 			"RestartPolicy": map[string]string{"Name": "unless-stopped"},
 			"NetworkMode":   s.Network,
 		},
+	}
+	hc := body["HostConfig"].(map[string]any)
+	if s.Memory > 0 {
+		hc["Memory"] = s.Memory
+	}
+	if s.NanoCPUs > 0 {
+		hc["NanoCpus"] = s.NanoCPUs
+	}
+	if s.PidsLimit > 0 {
+		hc["PidsLimit"] = s.PidsLimit
 	}
 	if s.PublishLoopback {
 		body["HostConfig"].(map[string]any)["PortBindings"] = map[string]any{

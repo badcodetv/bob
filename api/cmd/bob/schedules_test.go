@@ -369,7 +369,9 @@ func TestTurningAScheduleBackOnDoesNotCatchUp(t *testing.T) {
 		t.Errorf("turned back on: %s, want nothing until the next firing", got)
 	}
 	// The next hour fires as usual.
-	c.set(sch.CreatedAt.Truncate(time.Hour).Add(4*time.Hour + time.Minute))
+	// (From the hour after it was turned back on: counting from the creation hour went backwards
+	// in time whenever the test ran after half past the hour.)
+	c.set(sch.CreatedAt.Add(3*time.Hour + 30*time.Minute).Truncate(time.Hour).Add(time.Hour + time.Minute))
 	a.tick(t.Context())
 	a.scheduled.Wait()
 	if got := statuses(runs(t, a, sch)); got != "cron:ok" {

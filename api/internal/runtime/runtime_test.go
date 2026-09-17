@@ -23,6 +23,36 @@ func TestSpecEnvironment(t *testing.T) {
 	}
 }
 
+func TestSpecFingerprint(t *testing.T) {
+	p := store.Project{Name: "wolf", RepoURL: "https://github.com/x/wolf", RepoRef: "main"}
+	base := Config{DefaultImage: "runtime:1", TokenKey: []byte("k"), PassEnv: map[string]string{"GITHUB_TOKEN": "a"}, Memory: 8 << 30, NanoCPUs: 4e9, PidsLimit: 2048}
+	label := func(c Config) string { return (&Manager{cfg: c}).spec(p, nil).Labels[SpecLabel] }
+	first := label(base)
+	if first == "" || first != label(base) {
+		t.Fatal("the fingerprint must be stable")
+	}
+	if len(first) != 64 {
+		t.Errorf("unexpected label %q", first)
+	}
+	changed := []func(c *Config){
+		func(c *Config) { c.DefaultImage = "runtime:2" },
+		func(c *Config) { c.PassEnv = map[string]string{"GITHUB_TOKEN": "rotated"} },
+		func(c *Config) { c.Memory = 4 << 30 },
+		func(c *Config) { c.TokenKey = []byte("other") },
+	}
+	for i, change := range changed {
+		c := base
+		change(&c)
+		if label(c) == first {
+			t.Errorf("change %d did not change the fingerprint", i)
+		}
+	}
+	s := (&Manager{cfg: base}).spec(p, nil)
+	if s.Memory != 8<<30 || s.NanoCPUs != 4e9 || s.PidsLimit != 2048 {
+		t.Errorf("limits not applied: %+v", s)
+	}
+}
+
 func TestTokenAndErrors(t *testing.T) {
 	a, b := Token([]byte("k"), "wolf"), Token([]byte("k"), "enc")
 	if a == b || a == Token([]byte("other"), "wolf") || len(a) != 64 {

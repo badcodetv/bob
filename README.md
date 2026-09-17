@@ -185,6 +185,22 @@ and deleting schedules, and settings. Everything else: anyone who may use that p
 Events are stored exactly as the harness emitted them, with `engine` and `kind` beside the
 payload. Bob's own events are `bob.user_message`, `bob.turn_done` and `bob.turn_failed`.
 
+## Running it on a server
+
+One image holds the API and the built web app (`Dockerfile`); project containers use
+`runtime/Dockerfile`. `scripts/publish` builds both and pushes them to Artifact Registry tagged with
+the commit. The server's compose file and secrets live in BadCode's private ops repository.
+
+In a container, Bob needs the host's Docker socket (`/var/run/docker.sock`), a Docker network for
+project containers that it also joins (`BOB_DOCKER_NETWORK`), and the runtime image already pulled
+on the host (Bob does not pull images). Project containers publish no ports; Bob reaches them by
+name on that network. `GET /healthz` answers 200 when the database does.
+
+Limits for each project container: `BOB_PROJECT_MEMORY` (e.g. `8g`), `BOB_PROJECT_CPUS` (e.g. `4`),
+`BOB_PROJECT_PIDS` (default 4096). When Bob starts, it replaces any project container whose settings
+changed — a new runtime image, a rotated pass-through token, new limits — so the next turn gets a
+fresh container on the same volume.
+
 ## Tests
 
 ```sh

@@ -38,6 +38,10 @@ type Config struct {
 	Secrets func(ctx context.Context, project string) (map[string]string, error)
 	// TokenKey derives each project's runtime token (see Token). Required.
 	TokenKey []byte
+	// Limits for every project container; zero means none.
+	Memory    int64 // bytes
+	NanoCPUs  int64
+	PidsLimit int64
 }
 
 // Token is the password a project's runtime server requires on every request, so an agent in
@@ -122,6 +126,41 @@ func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
 	return base, waitHealthy(ctx, base)
 }
 
+// SpecLabel is the container label holding a fingerprint of everything Bob configured it with.
+const SpecLabel = "bob.spec"
+
+// ReplaceStale removes each project container whose configuration no longer matches what Bob
+// would create now — a new runtime image, a changed pass-through variable (a rotated token), new
+// limits — so the next turn starts a fresh one on the same volume. Call it at startup, before
+// any turn runs: removing a container stops whatever it is doing.
+func (m *Manager) ReplaceStale(ctx context.Context, projects []store.Project) (replaced []string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range projects {
+		st, err := m.docker.Inspect(ctx, ContainerName(p.Name))
+		if errors.Is(err, docker.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return replaced, err
+		}
+		var secrets map[string]string
+		if m.cfg.Secrets != nil {
+			if secrets, err = m.cfg.Secrets(ctx, p.Name); err != nil {
+				return replaced, err
+			}
+		}
+		if st.Labels[SpecLabel] == m.spec(p, secrets).Labels[SpecLabel] {
+			continue
+		}
+		if err := m.docker.Remove(ctx, ContainerName(p.Name)); err != nil {
+			return replaced, err
+		}
+		replaced = append(replaced, p.Name)
+	}
+	return replaced, nil
+}
+
 // Recreate removes the project's container (keeping its volume) so the next Ensure picks up
 // changed settings.
 func (m *Manager) Recreate(ctx context.Context, project string) error {
@@ -167,7 +206,7 @@ func (m *Manager) spec(p store.Project, secrets map[string]string) docker.Contai
 	if p.RepoMount != "" {
 		binds = append(binds, p.RepoMount+":/seed:ro")
 	}
-	return docker.ContainerSpec{
+	s := docker.ContainerSpec{
 		Name:            ContainerName(p.Name),
 		Image:           image,
 		Env:             env,
@@ -176,7 +215,18 @@ func (m *Manager) spec(p store.Project, secrets map[string]string) docker.Contai
 		Network:         m.cfg.Network,
 		PublishLoopback: m.cfg.Network == "",
 		Port:            containerPort,
+		Memory:          m.cfg.Memory,
+		NanoCPUs:        m.cfg.NanoCPUs,
+		PidsLimit:       m.cfg.PidsLimit,
 	}
+	// A keyed hash, not a plain one: the environment holds secrets, and labels are readable by
+	// anyone who can list containers.
+	canonical, _ := json.Marshal(s)
+	mac := hmac.New(sha256.New, m.cfg.TokenKey)
+	mac.Write([]byte("bob-spec\x00"))
+	mac.Write(canonical)
+	s.Labels[SpecLabel] = hex.EncodeToString(mac.Sum(nil))
+	return s
 }
 
 func waitHealthy(ctx context.Context, base string) error {

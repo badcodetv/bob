@@ -132,6 +132,7 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("PATCH /api/settings", admin, a.updateSettings)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", a.healthz)
 	mux.HandleFunc("GET /api/config", a.config)
 	mux.HandleFunc("POST /api/login", a.login)
 	mux.HandleFunc("POST /api/logout", a.logout)
@@ -225,6 +226,17 @@ func (a *app) requireLogin(next http.Handler) http.Handler {
 }
 
 // spa serves the built web app, falling back to index.html for client-side routes.
+// healthz is for the box's healthcheck and monitoring: 200 when the database answers. No auth, no detail.
+func (a *app) healthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := a.store.Ping(ctx); err != nil {
+		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Write([]byte("ok\n"))
+}
+
 func spa(dir string) http.Handler {
 	files := http.FileServer(http.Dir(dir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -16,14 +16,19 @@
 //	                   unset = project secrets are off
 //	BOB_PASS_ENV       comma-separated variables copied into project containers,
 //	                   e.g. CLAUDE_CODE_OAUTH_TOKEN,ANTHROPIC_API_KEY,GITHUB_TOKEN
+//	BOB_PROJECT_MEMORY memory limit per project container, e.g. 8g (default: none)
+//	BOB_PROJECT_CPUS   CPU limit per project container, e.g. 4 (default: none)
+//	BOB_PROJECT_PIDS   process limit per project container (default 4096)
 package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -80,6 +85,19 @@ func main() {
 			}
 		}
 	}
+	memory, err := parseBytes(os.Getenv("BOB_PROJECT_MEMORY"))
+	if err != nil {
+		log.Fatalf("BOB_PROJECT_MEMORY: %v", err)
+	}
+	cpus, err := strconv.ParseFloat(env("BOB_PROJECT_CPUS", "0"), 64)
+	if err != nil || cpus < 0 {
+		log.Fatalf("BOB_PROJECT_CPUS: not a number of CPUs: %q", os.Getenv("BOB_PROJECT_CPUS"))
+	}
+	pids, err := strconv.ParseInt(env("BOB_PROJECT_PIDS", "4096"), 10, 64)
+	if err != nil || pids < 0 {
+		log.Fatalf("BOB_PROJECT_PIDS: not a number: %q", os.Getenv("BOB_PROJECT_PIDS"))
+	}
+
 	app := &app{
 		auth:    signIn,
 		access:  people,
@@ -92,12 +110,24 @@ func main() {
 			Network:      os.Getenv("BOB_DOCKER_NETWORK"),
 			PassEnv:      pass,
 			TokenKey:     signIn.Secret,
+			Memory:       memory,
+			NanoCPUs:     int64(cpus * 1e9),
+			PidsLimit:    pids,
 		}),
 		turns: map[string]context.CancelFunc{},
 		now:   time.Now,
 	}
 	app.projectOf = app.storeProjectOf
 	app.runtime.(*runtime.Manager).SetSecrets(app.projectSecrets)
+	// Before any turn can run: containers made with an older image, token or limits are replaced
+	// on their next use.
+	if projects, err := st.Projects(ctx); err != nil {
+		log.Fatal(err)
+	} else if replaced, err := app.runtime.(*runtime.Manager).ReplaceStale(ctx, projects); err != nil {
+		log.Printf("checking project containers: %v", err)
+	} else if len(replaced) > 0 {
+		log.Printf("replaced project containers with changed settings: %s", strings.Join(replaced, ", "))
+	}
 	go app.scheduleLoop(ctx)
 
 	srv := &http.Server{Addr: env("BOB_ADDR", ":8090"), Handler: app.routes()}
@@ -111,6 +141,31 @@ func main() {
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// parseBytes reads a size such as 512m or 8g ("" is 0, no limit).
+func parseBytes(s string) (int64, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return 0, nil
+	}
+	mult := int64(1)
+	switch s[len(s)-1] {
+	case 'k':
+		mult = 1 << 10
+	case 'm':
+		mult = 1 << 20
+	case 'g':
+		mult = 1 << 30
+	}
+	if mult > 1 {
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("not a size like 512m or 8g: %q", s)
+	}
+	return n * mult, nil
 }
 
 func env(k, def string) string {
