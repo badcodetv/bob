@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api, Unauthorized, type Project, type Session, type Worker, type WorkerList } from './api'
 import { Chat, NewChat } from './Chat'
+import { ProjectSettings } from './ProjectSettings'
 
 // Routes are the URL hash: #/ · #/p/<project> · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
 function useHash() {
@@ -30,6 +31,7 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
   const session = mode === 's' ? id : undefined
   const newWorker = mode === 'new' ? id : undefined
   const [sessionsVersion, setSessionsVersion] = useState(0)
+  const [projectsVersion, setProjectsVersion] = useState(0)
   const [workers, setWorkers] = useState<WorkerList | null>(null)
   useEffect(() => { setWorkers(null) }, [project])
   const findWorker = (name?: string) => workers?.workers.find((w) => w.name === name)
@@ -42,8 +44,9 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
     <div className="flex h-screen">
       <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r p-4 text-sm">
         <a href="#/" className="text-lg font-semibold">Bob</a>
-        <Projects current={project} onError={guard} />
-        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} workers={workers} onWorkers={setWorkers} onError={guard} />}
+        <Projects current={project} version={projectsVersion} onError={guard} />
+        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} workers={workers} onWorkers={setWorkers} onError={guard}
+          onProjectDeleted={() => { setProjectsVersion((v) => v + 1); window.location.hash = '/' }} />}
         <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate">{email}</span>
           <Button variant="ghost" size="sm" onClick={() => api.logout().then(onSignedOut)}>Sign out</Button>
@@ -72,11 +75,11 @@ function Empty({ project }: { project?: string }) {
   )
 }
 
-function Projects({ current, onError }: { current?: string; onError: (e: unknown) => void }) {
+function Projects({ current, version, onError }: { current?: string; version: number; onError: (e: unknown) => void }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [creating, setCreating] = useState(false)
   const load = useCallback(() => api.projects().then(setProjects).catch(onError), [onError])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load() }, [load, version])
 
   return (
     <section className="flex flex-col gap-1">
@@ -113,10 +116,11 @@ function CreateProject({ onDone, onError }: { onDone: (name?: string) => void; o
   )
 }
 
-function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, workers: list, onWorkers: setList, onError }: {
+function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, workers: list, onWorkers: setList, onError, onProjectDeleted }: {
   project: string; currentSession?: string; currentWorker?: string; sessionsVersion: number
-  workers: WorkerList | null; onWorkers: (l: WorkerList) => void; onError: (e: unknown) => void
+  workers: WorkerList | null; onWorkers: (l: WorkerList) => void; onError: (e: unknown) => void; onProjectDeleted: () => void
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [sessions, setSessions] = useState<Session[]>([])
   const [busy, setBusy] = useState('')
 
@@ -134,6 +138,12 @@ function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion,
 
   return (
     <>
+      <div className="flex items-center justify-between border-t pt-3">
+        <span className="font-medium">{project}</span>
+        <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>
+      </div>
+      <ProjectSettings name={project} open={settingsOpen} onOpenChange={setSettingsOpen} onError={onError}
+        onSaved={sync} onDeleted={onProjectDeleted} />
       <section className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-medium uppercase text-muted-foreground">Workers</h2>

@@ -35,6 +35,9 @@ func (a *app) routes() http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/projects", a.listProjects)
 	api.HandleFunc("POST /api/projects", a.createProject)
+	api.HandleFunc("GET /api/projects/{project}", a.getProject)
+	api.HandleFunc("PATCH /api/projects/{project}", a.updateProject)
+	api.HandleFunc("DELETE /api/projects/{project}", a.deleteProject)
 	api.HandleFunc("POST /api/projects/{project}/restart", a.restartProject)
 	api.HandleFunc("POST /api/projects/{project}/sync", a.syncProject)
 	api.HandleFunc("GET /api/projects/{project}/workers", a.listWorkers)
@@ -117,6 +120,50 @@ func (a *app) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := a.store.CreateProject(r.Context(), p)
 	reply(w, p, err)
+}
+
+func (a *app) getProject(w http.ResponseWriter, r *http.Request) {
+	p, err := a.store.Project(r.Context(), r.PathValue("project"))
+	reply(w, p, err)
+}
+
+// updateProject saves new repository settings and recreates the project's container, keeping
+// its volume, so the next request boots with them and syncs git.
+func (a *app) updateProject(w http.ResponseWriter, r *http.Request) {
+	var body store.Project
+	if !decode(w, r, &body) {
+		return
+	}
+	body.Name = r.PathValue("project")
+	p, err := a.store.UpdateProject(r.Context(), body)
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	reply(w, p, a.runtime.Recreate(r.Context(), p.Name))
+}
+
+// deleteProject stops the project's running turns, removes its container and volume, then
+// deletes it with its sessions and their events.
+func (a *app) deleteProject(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("project")
+	sessions, err := a.store.Sessions(r.Context(), name)
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	if _, err := a.store.Project(r.Context(), name); err != nil {
+		reply(w, nil, err)
+		return
+	}
+	for _, s := range sessions {
+		a.endTurn(s.ID)
+	}
+	if err := a.runtime.Destroy(r.Context(), name); err != nil {
+		reply(w, nil, fmt.Errorf("removing the project's container and volume: %w", err))
+		return
+	}
+	reply(w, map[string]bool{"ok": true}, a.store.DeleteProject(r.Context(), name))
 }
 
 func (a *app) restartProject(w http.ResponseWriter, r *http.Request) {

@@ -44,7 +44,9 @@ Private config repositories are cloned with `GITHUB_TOKEN`. For a local reposito
 development, create the project over the API with `"repo_url": "file:///seed"` and
 `"repo_mount": "/abs/path/to/repo"`.
 
-`POST /api/projects/<name>/restart` recreates a project's container (keeping its volume, and so
+A project's **Settings** (sidebar) change its repository, branch, subfolder and image, or delete
+it — deleting removes the container, the volume and every chat. `POST /api/projects/<name>/restart`
+recreates a project's container (keeping its volume, and so
 every session) — needed after changing the project's own settings or passed-in credentials.
 
 ## API
@@ -53,6 +55,8 @@ every session) — needed after changing the project's own settings or passed-in
 | --- | --- |
 | `GET /api/config` · `POST /api/login` · `POST /api/logout` | Google sign-in; everything else needs the session cookie |
 | `GET/POST /api/projects` | list, create |
+| `GET/PATCH /api/projects/{p}` | read; change `{repo_url, repo_ref, subfolder, image}` (recreates the container, keeps the volume) |
+| `DELETE /api/projects/{p}` | remove its container **and volume**, its chats and their events |
 | `POST /api/projects/{p}/restart` | recreate the container, keep the volume |
 | `GET /api/projects/{p}/workers` | workers read from git, and the last git sync |
 | `POST /api/projects/{p}/sync` | pull the config folder again, then list workers |

@@ -40,6 +40,9 @@ func NewManager(d *docker.Client, cfg Config) *Manager { return &Manager{docker:
 
 func ContainerName(project string) string { return "bob-project-" + project }
 
+// VolumeName is the project's volume: its repository checkout, chat worktrees and harness state.
+func VolumeName(project string) string { return "bob-project-" + project }
+
 // Ensure returns the base URL of the project's runtime server, creating and starting the
 // container if needed, and waiting until it answers /health.
 func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
@@ -79,6 +82,16 @@ func (m *Manager) Recreate(ctx context.Context, project string) error {
 	return m.docker.Remove(ctx, ContainerName(project))
 }
 
+// Destroy removes the project's container and its volume. Nothing of the project is left in Docker.
+func (m *Manager) Destroy(ctx context.Context, project string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.docker.Remove(ctx, ContainerName(project)); err != nil {
+		return err
+	}
+	return m.docker.RemoveVolume(ctx, VolumeName(project))
+}
+
 func (m *Manager) spec(p store.Project) docker.ContainerSpec {
 	image := p.Image
 	if image == "" {
@@ -88,7 +101,7 @@ func (m *Manager) spec(p store.Project) docker.ContainerSpec {
 	for k, v := range m.cfg.PassEnv {
 		env = append(env, k+"="+v)
 	}
-	binds := []string{"bob-project-" + p.Name + ":/project"}
+	binds := []string{VolumeName(p.Name) + ":/project"}
 	if p.RepoMount != "" {
 		binds = append(binds, p.RepoMount+":/seed:ro")
 	}

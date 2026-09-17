@@ -85,6 +85,25 @@ func (s *Store) CreateProject(ctx context.Context, p Project) (Project, error) {
 	return p, err
 }
 
+// UpdateProject changes a project's repository settings. The name cannot change: the
+// project's container and volume are named after it.
+func (s *Store) UpdateProject(ctx context.Context, p Project) (Project, error) {
+	if p.RepoRef == "" {
+		p.RepoRef = "main"
+	}
+	return scanProject(s.db.QueryRow(ctx, `UPDATE projects SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5
+		WHERE name = $1 RETURNING `+projectCols, p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image))
+}
+
+// DeleteProject removes a project with all its sessions and their events.
+func (s *Store) DeleteProject(ctx context.Context, name string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM projects WHERE name = $1`, name)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
 const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, created_at`
 
 func scanProject(row pgx.Row) (Project, error) {

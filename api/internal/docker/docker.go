@@ -105,6 +105,15 @@ func (c *Client) Remove(ctx context.Context, name string) error {
 	return err
 }
 
+// RemoveVolume deletes a named volume. A volume that does not exist is not an error.
+func (c *Client) RemoveVolume(ctx context.Context, name string) error {
+	err := c.do(ctx, http.MethodDelete, "/volumes/"+url.PathEscape(name)+"?force=true", nil, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
