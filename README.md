@@ -54,6 +54,21 @@ it — deleting removes the container, the volume and every chat. `POST /api/pro
 recreates a project's container (keeping its volume, and so
 every session) — needed after changing the project's own settings or passed-in credentials.
 
+## Secrets
+
+A project's **Settings** hold its secrets: environment variables for that project's container
+only (an API key, a GitHub token that may push). A secret replaces a `BOB_PASS_ENV` variable of
+the same name, so one project can have its own `GITHUB_TOKEN`. Values are encrypted with
+AES-256-GCM under `BOB_SECRETS_KEY` (32 random bytes, base64; `scripts/import-agent-bob-env`
+generates one) and bound to their project and name. They are never logged and never sent to the
+browser: the API lists names, who set them and when. Saving or deleting one restarts the
+project's container — unless a turn is running there, in which case it applies at the next
+restart. Names Bob or the image set (`BOB_*`, `GIT_*`, `PATH`, `HOME`, …) are refused. Without
+`BOB_SECRETS_KEY` secrets are off, and a project that has some will not start.
+
+Keep `BOB_SECRETS_KEY` safe: losing it makes stored secrets unreadable. A worker can read its
+project's secrets (that is the point), so it could also repeat one in a chat.
+
 ## Files
 
 `GET /api/projects/<p>/files/<path>` reads the project's **synced checkout** (what the last git
@@ -117,8 +132,8 @@ still works when no map is set, making each email an admin, and logs that it is 
 
 ## API
 
-Admin only: creating projects, `PATCH`/`DELETE` a project, restart, creating, changing and
-deleting schedules, and settings. Everything else: anyone who may use that project.
+Admin only: creating projects, `PATCH`/`DELETE` a project, restart, secrets, creating, changing
+and deleting schedules, and settings. Everything else: anyone who may use that project.
 
 | | |
 | --- | --- |
@@ -139,6 +154,8 @@ deleting schedules, and settings. Everything else: anyone who may use that proje
 | `GET /api/sessions/{id}/stream` | SSE: stored events, then live ones (token deltas are live-only) |
 | `GET /api/projects/{p}/files/{path}` | a file or directory listing from the synced checkout, sandboxed (see Files) |
 | `POST /api/projects/{p}/view` · `GET /api/view/{token}/{path}` | a 12-hour viewer link, and files read through it without the cookie |
+| `GET /api/projects/{p}/secrets` | names, `updated_by`, `updated_at` — never values (admin) |
+| `PUT /api/projects/{p}/secrets/{NAME}` · `DELETE …` | `{value}`; set or delete, then `{applied}`: whether the container restarted with it (admin) |
 | `GET /api/projects/{p}/schedules` | schedules, each with `next_at` and `last_run`; and whether all are `paused` |
 | `POST /api/projects/{p}/schedules` | `{name, worker, cron, timezone?, message, enabled?, keep_sessions?}` |
 | `PATCH /api/schedules/{id}` · `DELETE /api/schedules/{id}` | change any of those fields; delete (its chats stay) |

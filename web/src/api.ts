@@ -1,6 +1,7 @@
 // Thin client for Bob's API. Every call is same-origin; the session cookie does the auth.
 
 export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; files_root: string; created_at: string }
+export interface SecretInfo { name: string; updated_by: string; updated_at: string }
 export interface FileEntry { name: string; type: 'file' | 'dir' | 'link' | 'other'; size: number }
 export interface Worker { name: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string }
 export interface WorkerList { sync: { ok: boolean; commit?: string; error?: string }; workers: Worker[]; error?: string }
@@ -69,6 +70,10 @@ export const api = {
   listFiles: (project: string, path: string) => call<{ entries: FileEntry[] }>('GET', `/api/projects/${project}/files/${encodePath(path)}`).then((r) => r.entries),
   /** A link prefix under which the project's files load without the cookie, for sandboxed pages. */
   viewLink: (project: string) => call<{ base: string }>('POST', `/api/projects/${project}/view`).then((r) => r.base),
+  secrets: (project: string) => call<{ secrets: SecretInfo[]; enabled: boolean }>('GET', `/api/projects/${project}/secrets`),
+  /** applied: false means a turn was running, so the project's container keeps the old values until it restarts. */
+  setSecret: (project: string, name: string, value: string) => call<{ applied: boolean }>('PUT', `/api/projects/${project}/secrets/${name}`, { value }),
+  deleteSecret: (project: string, name: string) => call<{ applied: boolean }>('DELETE', `/api/projects/${project}/secrets/${name}`),
   settings: () => call<{ schedules_paused: boolean }>('GET', '/api/settings'),
   updateSettings: (s: { schedules_paused: boolean }) => call<{ schedules_paused: boolean }>('PATCH', '/api/settings', s),
 }

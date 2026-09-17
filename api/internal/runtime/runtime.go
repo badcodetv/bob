@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,9 @@ type Config struct {
 	Network string
 	// PassEnv lists variables copied from Bob's own environment into every project container.
 	PassEnv map[string]string
+	// Secrets returns a project's own secrets, decrypted, when its container is created. They
+	// are added after PassEnv, so a project's secret replaces a passed variable of the same name.
+	Secrets func(ctx context.Context, project string) (map[string]string, error)
 }
 
 type Manager struct {
@@ -37,6 +41,13 @@ type Manager struct {
 }
 
 func NewManager(d *docker.Client, cfg Config) *Manager { return &Manager{docker: d, cfg: cfg} }
+
+// SetSecrets sets Config.Secrets after construction (the source needs the app that holds the Manager).
+func (m *Manager) SetSecrets(f func(ctx context.Context, project string) (map[string]string, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.Secrets = f
+}
 
 func ContainerName(project string) string { return "bob-project-" + project }
 
@@ -51,7 +62,13 @@ func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
 	name := ContainerName(p.Name)
 	st, err := m.docker.Inspect(ctx, name)
 	if errors.Is(err, docker.ErrNotFound) {
-		id, cerr := m.docker.Create(ctx, m.spec(p))
+		var secrets map[string]string
+		if m.cfg.Secrets != nil {
+			if secrets, err = m.cfg.Secrets(ctx, p.Name); err != nil {
+				return "", err
+			}
+		}
+		id, cerr := m.docker.Create(ctx, m.spec(p, secrets))
 		if cerr != nil {
 			return "", cerr
 		}
@@ -92,15 +109,24 @@ func (m *Manager) Destroy(ctx context.Context, project string) error {
 	return m.docker.RemoveVolume(ctx, VolumeName(project))
 }
 
-func (m *Manager) spec(p store.Project) docker.ContainerSpec {
+func (m *Manager) spec(p store.Project, secrets map[string]string) docker.ContainerSpec {
 	image := p.Image
 	if image == "" {
 		image = m.cfg.DefaultImage
 	}
-	env := []string{"BOB_REPO_URL=" + p.RepoURL, "BOB_REPO_REF=" + p.RepoRef, "BOB_REPO_SUBFOLDER=" + p.Subfolder}
+	vars := map[string]string{}
 	for k, v := range m.cfg.PassEnv {
+		vars[k] = v
+	}
+	for k, v := range secrets {
+		vars[k] = v
+	}
+	vars["BOB_REPO_URL"], vars["BOB_REPO_REF"], vars["BOB_REPO_SUBFOLDER"] = p.RepoURL, p.RepoRef, p.Subfolder
+	env := make([]string, 0, len(vars))
+	for k, v := range vars {
 		env = append(env, k+"="+v)
 	}
+	sort.Strings(env)
 	binds := []string{VolumeName(p.Name) + ":/project"}
 	if p.RepoMount != "" {
 		binds = append(binds, p.RepoMount+":/seed:ro")

@@ -12,6 +12,8 @@
 //	BOB_PROJECT_MAP_FILE the same map read from a file (BOB_PROJECT_MAP wins)
 //	BOB_ALLOWED_EMAILS deprecated: comma-separated emails, each an admin, when no map is set
 //	BOB_WEB_DIR        serve the built web app from here (optional; dev uses Vite)
+//	BOB_SECRETS_KEY    encrypts project secrets: 32 bytes, base64 (openssl rand -base64 32);
+//	                   unset = project secrets are off
 //	BOB_PASS_ENV       comma-separated variables copied into project containers,
 //	                   e.g. CLAUDE_CODE_OAUTH_TOKEN,ANTHROPIC_API_KEY,GITHUB_TOKEN
 package main
@@ -31,6 +33,7 @@ import (
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/docker"
 	"github.com/badcodetv/bob/internal/runtime"
+	"github.com/badcodetv/bob/internal/secrets"
 	"github.com/badcodetv/bob/internal/store"
 )
 
@@ -60,6 +63,15 @@ func main() {
 		log.Fatal("GOOGLE_CLIENT_ID and BOB_SESSION_SECRET (16+ chars) are required")
 	}
 
+	var box *secrets.Box
+	if key := os.Getenv("BOB_SECRETS_KEY"); key != "" {
+		if box, err = secrets.NewBox(key); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Print("BOB_SECRETS_KEY is not set: project secrets are off")
+	}
+
 	pass := map[string]string{}
 	for _, k := range strings.Split(os.Getenv("BOB_PASS_ENV"), ",") {
 		if k = strings.TrimSpace(k); k != "" {
@@ -69,11 +81,12 @@ func main() {
 		}
 	}
 	app := &app{
-		auth:   signIn,
-		access: people,
-		webDir: os.Getenv("BOB_WEB_DIR"),
-		store:  st,
-		broker: broker.New(),
+		auth:    signIn,
+		access:  people,
+		secrets: box,
+		webDir:  os.Getenv("BOB_WEB_DIR"),
+		store:   st,
+		broker:  broker.New(),
 		runtime: runtime.NewManager(docker.New(env("BOB_DOCKER_SOCKET", "/var/run/docker.sock")), runtime.Config{
 			DefaultImage: env("BOB_RUNTIME_IMAGE", "bob-runtime:dev"),
 			Network:      os.Getenv("BOB_DOCKER_NETWORK"),
@@ -83,6 +96,7 @@ func main() {
 		now:   time.Now,
 	}
 	app.projectOf = app.storeProjectOf
+	app.runtime.(*runtime.Manager).SetSecrets(app.projectSecrets)
 	go app.scheduleLoop(ctx)
 
 	srv := &http.Server{Addr: env("BOB_ADDR", ":8090"), Handler: app.routes()}

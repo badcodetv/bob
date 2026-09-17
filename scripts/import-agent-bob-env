@@ -93,6 +93,12 @@ if src.get("AGENTKIT_PROJECT_MAP"):
     except ValueError:
         missing.append("AGENTKIT_PROJECT_MAP (not valid JSON)")
 
+# Encrypts project secrets in Postgres. Generated once; losing it makes stored secrets unreadable.
+if not merged.get("BOB_SECRETS_KEY"):
+    import base64
+    merged["BOB_SECRETS_KEY"] = base64.b64encode(os.urandom(32)).decode()
+    imported.append("BOB_SECRETS_KEY (new)")
+
 lines = [f"# Bob local settings. Git-ignored. Imported from {SRC} by scripts/import-agent-bob-env."]
 lines += [f"{k}={quote(v)}" for k, v in merged.items()]
 fd = os.open(DST, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

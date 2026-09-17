@@ -66,14 +66,14 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 type Project struct {
-	Name      string    `json:"name"`
-	RepoURL   string    `json:"repo_url"`
-	RepoRef   string    `json:"repo_ref"`
-	Subfolder string    `json:"subfolder"`
-	Image     string    `json:"image"`
-	RepoMount string    `json:"repo_mount,omitempty"`
+	Name      string `json:"name"`
+	RepoURL   string `json:"repo_url"`
+	RepoRef   string `json:"repo_ref"`
+	Subfolder string `json:"subfolder"`
+	Image     string `json:"image"`
+	RepoMount string `json:"repo_mount,omitempty"`
 	// FilesRoot is the repository folder the Files page opens on; empty = the root.
-	FilesRoot string `json:"files_root"`
+	FilesRoot string    `json:"files_root"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

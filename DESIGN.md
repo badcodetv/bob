@@ -54,16 +54,16 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
   events are stored in Postgres and streamed back. *(done)*
 - **M2** — Codex worker in the same project, on a ChatGPT subscription. Cold boot from Postgres
   for Claude (`SessionStore`) and Codex (rollout file).
-- **M3** — Google login, UI on assistant-ui (projects, workers, chat), git sync. *(done)* Secrets table next.
+- **M3** — Google login, UI on assistant-ui (projects, workers, chat), git sync, per-project secrets. *(done)*
 - **M4** — Memory (carried over: labels, selectors, hybrid search), files MCP, human attention.
-- **M5** — Schedules, Google Drive/Gmail, usage report. Then Wolf.
+- **M5** — Schedules *(done)*, Google Drive/Gmail, usage report. Then Wolf.
 
 **Wolf as a Bob project** (Kai, 2026-09-17): Wolf is not a separate app; it is an ordinary Bob
 project. The Bob work it needs is Part A of
 [design/2026-09-17-wolf-as-a-bob-project.md](design/2026-09-17-wolf-as-a-bob-project.md) —
 A1 per-project access map, A2 the signed-in person in each turn, A3 push from worktrees, A4
 schedules (plus a global pause switch), A5 a sandboxed repo file viewer, A6 secrets pass-through
-(the per-project secrets table follows). That is the build order ahead of Codex (M2).
+and the per-project secrets table. *(All built 2026-09-17.)* Codex (M2) is next.
 
 ## Not doing
 

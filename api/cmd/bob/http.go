@@ -20,6 +20,7 @@ import (
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/engines"
 	"github.com/badcodetv/bob/internal/runtime"
+	"github.com/badcodetv/bob/internal/secrets"
 	"github.com/badcodetv/bob/internal/store"
 )
 
@@ -39,6 +40,7 @@ type app struct {
 	store     *store.Store
 	broker    *broker.Broker
 	runtime   containers
+	secrets   *secrets.Box // nil when BOB_SECRETS_KEY is unset: secrets are off
 	now       func() time.Time
 
 	mu        sync.Mutex
@@ -87,6 +89,9 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("GET /api/projects/{project}/files", member, a.getFile)
 	handle("GET /api/projects/{project}/files/{path...}", member, a.getFile)
 	handle("POST /api/projects/{project}/view", member, a.viewLink)
+	handle("GET /api/projects/{project}/secrets", admin, a.listSecrets)
+	handle("PUT /api/projects/{project}/secrets/{name}", admin, a.setSecret)
+	handle("DELETE /api/projects/{project}/secrets/{name}", admin, a.deleteSecret)
 	handle("GET /api/projects/{project}/schedules", member, a.listSchedules)
 	handle("POST /api/projects/{project}/schedules", admin, a.createSchedule)
 	handle("PATCH /api/schedules/{schedule}", admin, a.updateSchedule)
