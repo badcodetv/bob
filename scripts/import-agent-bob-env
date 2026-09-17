@@ -37,7 +37,8 @@ DEFAULTS = {
     "BOB_RUNTIME_IMAGE": "bob-runtime:dev",
     # Claude prefers ANTHROPIC_API_KEY over CLAUDE_CODE_OAUTH_TOKEN when both are present,
     # so only the subscription token is passed. Swap it for ANTHROPIC_API_KEY to use billing.
-    "BOB_PASS_ENV": "CLAUDE_CODE_OAUTH_TOKEN,GITHUB_TOKEN",
+    # FRED_API_KEY: the Wolf project's economic data (every project gets it until the secrets table).
+    "BOB_PASS_ENV": "CLAUDE_CODE_OAUTH_TOKEN,GITHUB_TOKEN,FRED_API_KEY",
 }
 
 
@@ -74,6 +75,12 @@ for old, new in RENAMES.items():
         missing.append(old)
 for key, value in DEFAULTS.items():
     merged.setdefault(key, value)
+# Variables added to the default pass-through list since .env was first written.
+passed = [k for k in merged["BOB_PASS_ENV"].split(",") if k]
+for key in DEFAULTS["BOB_PASS_ENV"].split(","):
+    if key not in passed:
+        passed.append(key)
+merged["BOB_PASS_ENV"] = ",".join(passed)
 
 # Who may sign in and which projects they use: agent-bob's project map, users only.
 if src.get("AGENTKIT_PROJECT_MAP"):
