@@ -2,7 +2,7 @@
 // Events are passed through exactly as the SDK emits them.
 import { query, type EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import type { Worker } from './workers.js';
-import type { Turn, TurnResult } from './turn.js';
+import { turnEnv, type Turn, type TurnResult } from './turn.js';
 
 export async function runClaudeTurn(worker: Worker, turn: Turn, emit: (event: unknown) => void, signal: AbortSignal): Promise<TurnResult> {
   const abortController = new AbortController();
@@ -14,6 +14,7 @@ export async function runClaudeTurn(worker: Worker, turn: Turn, emit: (event: un
     prompt: turn.text,
     options: {
       cwd: turn.cwd,
+      env: { ...process.env, ...turnEnv(turn) },
       resume: turn.resume,
       model: turn.model || worker.model,
       effort: (turn.effort || worker.effort) as EffortLevel | undefined,

@@ -197,6 +197,10 @@ type TurnRequest struct {
 	Resume    string `json:"resume,omitempty"`
 	Model     string `json:"model,omitempty"`
 	Effort    string `json:"effort,omitempty"`
+	// UserEmail and UserName are who the turn runs for: the signed-in person, or
+	// "schedule:<id>" and the schedule's name for a scheduled turn.
+	UserEmail string `json:"user_email"`
+	UserName  string `json:"user_name"`
 }
 
 // RemoveSession deletes a session's worktree and branch inside the project container.

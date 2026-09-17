@@ -4,7 +4,7 @@
 //   GET  /workers                      the project's workers, read from git, plus the last sync
 //   POST /sync                         pull the project's git folder again
 //   DELETE /sessions/<id>              remove a session's worktree and branch
-//   POST /turns {session_id, worker, text, resume?, model?, effort?}
+//   POST /turns {session_id, worker, text, resume?, model?, effort?, user_email?, user_name?}
 //        → application/x-ndjson: {"engine", "event"} per harness event, then
 //          {"done": true, "harness_session_id"} or {"done": true, "error"}
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -58,7 +58,7 @@ async function workers() {
 }
 
 async function turn(req: IncomingMessage, res: ServerResponse) {
-  const body = JSON.parse(await readBody(req)) as { session_id?: string; worker?: string; text?: string; resume?: string; model?: string; effort?: string };
+  const body = JSON.parse(await readBody(req)) as { session_id?: string; worker?: string; text?: string; resume?: string; model?: string; effort?: string; user_email?: string; user_name?: string };
   if (!body.session_id || !/^[\w-]+$/.test(body.session_id) || !body.worker || !body.text) {
     return sendJSON(res, 400, { error: 'session_id, worker and text are required' });
   }
@@ -75,7 +75,8 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
   const line = (v: unknown) => res.write(JSON.stringify(v) + '\n');
 
   try {
-    const result = await driver(worker, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd },
+    const result = await driver(worker, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd,
+      userEmail: body.user_email, userName: body.user_name },
       (event) => line({ engine: worker.engine, event }), abort.signal);
     line({ done: true, harness_session_id: result.harnessSessionId, error: result.error });
   } catch (err) {

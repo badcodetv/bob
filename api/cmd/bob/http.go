@@ -134,13 +134,13 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	email, err := a.auth.VerifyGoogle(r.Context(), body.Credential)
+	u, err := a.auth.VerifyGoogle(r.Context(), body.Credential)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	a.auth.SetSession(w, email)
-	reply(w, map[string]string{"email": email}, nil)
+	a.auth.SetSession(w, u)
+	reply(w, u, nil)
 }
 
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +434,7 @@ func (a *app) sendMessage(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, err)
 		return
 	}
-	go a.runTurn(ctx, sess, body.Text)
+	go a.runTurn(ctx, sess, a.auth.User(r), body.Text)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	reply(w, userEvent, nil)
@@ -459,7 +459,9 @@ func (a *app) endTurn(sessionID string) {
 	a.mu.Unlock()
 }
 
-func (a *app) runTurn(ctx context.Context, sess store.Session, text string) {
+// runTurn runs one turn as user: the runtime gives the agent's tools that person's email and
+// name, and makes them the author of commits made during the turn.
+func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, text string) {
 	defer a.endTurn(sess.ID)
 	fail := func(err error) {
 		log.Printf("session %s: turn failed: %v", sess.ID, err)
@@ -477,7 +479,8 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, text string) {
 		return
 	}
 	var done *runtime.TurnLine
-	err = runtime.RunTurn(ctx, base, runtime.TurnRequest{SessionID: sess.ID, Worker: sess.Worker, Text: text, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort},
+	err = runtime.RunTurn(ctx, base, runtime.TurnRequest{SessionID: sess.ID, Worker: sess.Worker, Text: text, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort,
+		UserEmail: user.Email, UserName: user.Name},
 		func(line runtime.TurnLine) error {
 			if line.Done {
 				done = &line
