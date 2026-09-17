@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json entrypoint.sh ./
+COPY package.json entrypoint.sh sync.sh ./
 RUN mkdir -p /project && chown node:node /project
 ENV BOB_PROJECT_DIR=/project \
     CLAUDE_CONFIG_DIR=/project/.bob/claude \

@@ -46,10 +46,10 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
 ## Milestones
 
 - **M1** — API starts a project container; a Claude worker defined in git answers a message;
-  events are stored in Postgres and streamed back. *(this commit)*
+  events are stored in Postgres and streamed back. *(done)*
 - **M2** — Codex worker in the same project, on a ChatGPT subscription. Cold boot from Postgres
   for Claude (`SessionStore`) and Codex (rollout file).
-- **M3** — Secrets table, Google login, UI on assistant-ui (projects, sessions, chat).
+- **M3** — Google login, UI on assistant-ui (projects, workers, chat), git sync. *(done)* Secrets table next.
 - **M4** — Memory (carried over: labels, selectors, hybrid search), files MCP, human attention.
 - **M5** — Schedules, Google Drive/Gmail, usage report. Then Wolf.
 

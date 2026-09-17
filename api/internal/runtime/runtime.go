@@ -136,19 +136,36 @@ type Worker struct {
 	Prompt string   `json:"prompt"`
 }
 
-func Workers(ctx context.Context, base string) ([]Worker, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/workers", nil)
+// WorkerList is what the runtime reports about a project's config folder.
+type WorkerList struct {
+	Sync struct {
+		OK     bool   `json:"ok"`
+		Commit string `json:"commit,omitempty"`
+		Error  string `json:"error,omitempty"`
+	} `json:"sync"`
+	Workers []Worker `json:"workers"`
+	// Error is set when the folder was fetched but a worker file could not be read.
+	Error string `json:"error,omitempty"`
+}
+
+// Workers lists the project's workers; with sync, it pulls the git folder first.
+func Workers(ctx context.Context, base string, sync bool) (WorkerList, error) {
+	method, path := http.MethodGet, "/workers"
+	if sync {
+		method, path = http.MethodPost, "/sync"
+	}
+	req, _ := http.NewRequestWithContext(ctx, method, base+path, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return WorkerList{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("runtime /workers: %s: %s", resp.Status, bytes.TrimSpace(msg))
+		return WorkerList{}, fmt.Errorf("runtime %s: %s: %s", path, resp.Status, bytes.TrimSpace(msg))
 	}
-	var out struct{ Workers []Worker }
-	return out.Workers, json.NewDecoder(resp.Body).Decode(&out)
+	var out WorkerList
+	return out, json.NewDecoder(resp.Body).Decode(&out)
 }
 
 // TurnLine is one line of the runtime's NDJSON turn stream.

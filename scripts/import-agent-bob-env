@@ -7,6 +7,7 @@ Values are never printed. Re-running overwrites the imported keys and keeps anyt
 you have added to .env by hand. Keys agent-bob needed and Bob does not (snapshots, registry,
 blob backend, mock-model settings, the project map) are left behind on purpose.
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -73,6 +74,16 @@ for old, new in RENAMES.items():
         missing.append(old)
 for key, value in DEFAULTS.items():
     merged.setdefault(key, value)
+
+# Who may sign in: the users agent-bob's project map already allowed.
+if "BOB_ALLOWED_EMAILS" not in merged and src.get("AGENTKIT_PROJECT_MAP"):
+    try:
+        users = json.loads(src["AGENTKIT_PROJECT_MAP"]).get("users", {})
+        if users:
+            merged["BOB_ALLOWED_EMAILS"] = ",".join(sorted(users))
+            imported.append("BOB_ALLOWED_EMAILS")
+    except ValueError:
+        missing.append("AGENTKIT_PROJECT_MAP (not valid JSON)")
 
 lines = [f"# Bob local settings. Git-ignored. Imported from {SRC} by scripts/import-agent-bob-env."]
 lines += [f"{k}={quote(v)}" for k, v in merged.items()]

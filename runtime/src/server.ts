@@ -1,12 +1,15 @@
 // The runtime server: the only process Bob's API talks to inside a project container.
 //
 //   GET  /health
-//   GET  /workers                      the project's workers, read from git
+//   GET  /workers                      the project's workers, read from git, plus the last sync
+//   POST /sync                         pull the project's git folder again
 //   POST /turns {session_id, worker, text, resume?}
 //        → application/x-ndjson: {"engine", "event"} per harness event, then
 //          {"done": true, "harness_session_id"} or {"done": true, "error"}
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { loadWorkers, type Worker } from './workers.js';
 import { runClaudeTurn } from './claude.js';
@@ -29,11 +32,22 @@ createServer((req, res) => {
 
 async function handle(req: IncomingMessage, res: ServerResponse) {
   if (req.method === 'GET' && req.url === '/health') return sendJSON(res, 200, { ok: true });
-  if (req.method === 'GET' && req.url === '/workers') {
-    return sendJSON(res, 200, { workers: await loadWorkers(join(CONFIG_DIR, 'workers')) });
+  if (req.method === 'GET' && req.url === '/workers') return sendJSON(res, 200, await workers());
+  if (req.method === 'POST' && req.url === '/sync') {
+    await promisify(execFile)('/bin/sh', ['/app/sync.sh']);
+    return sendJSON(res, 200, await workers());
   }
   if (req.method === 'POST' && req.url === '/turns') return turn(req, res);
   sendJSON(res, 404, { error: 'not found' });
+}
+
+async function workers() {
+  const sync = JSON.parse(await readFile(join(PROJECT_DIR, '.bob', 'sync.json'), 'utf8').catch(() => '{"ok":false,"error":"never synced"}'));
+  try {
+    return { sync, workers: await loadWorkers(join(CONFIG_DIR, 'workers')) };
+  } catch (err) {
+    return { sync, workers: [], error: String((err as Error)?.message ?? err) };
+  }
 }
 
 async function turn(req: IncomingMessage, res: ServerResponse) {

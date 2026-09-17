@@ -4,9 +4,11 @@ Runs AI agent sessions for BadCode: one container per project, the labs' own har
 configuration from git, conversations in Postgres. Read [DESIGN.md](DESIGN.md) first.
 
 ```
-api/        Go API — projects, sessions, turns, stored events, Docker control
+api/        Go API — sign-in, projects, sessions, turns, stored events, Docker control
 runtime/    bob-runtime image — the small server inside each project container
+web/        the web app — assistant-ui chat, projects, workers
 examples/   an example project config folder (workers/, skills/)
+scripts/    import-agent-bob-env, dev-api
 ```
 
 ## A project's config folder
@@ -22,33 +24,34 @@ skills/<name>/SKILL.md
 ## Run it locally
 
 ```sh
+scripts/import-agent-bob-env          # once: reuse agent-bob's .env values (never printed)
 docker compose up -d postgres
 (cd runtime && npm ci && docker build -t bob-runtime:dev .)
-(cd api && BOB_DATABASE_URL=postgres://bob:bob@127.0.0.1:5433/bob \
-   BOB_PASS_ENV=CLAUDE_CODE_OAUTH_TOKEN,ANTHROPIC_API_KEY,GITHUB_TOKEN go run ./cmd/bob)
+scripts/dev-api                       # API on :8090
+(cd web && npm ci && npm run dev)     # UI on http://localhost:8080 (proxies /api)
 ```
 
-Then, with a config repo (a GitHub URL plus `GITHUB_TOKEN`, or a local repo for development):
+Sign in with Google (accounts in `BOB_ALLOWED_EMAILS`), create a project pointing at a git
+repository and subfolder, and pick a worker to start a chat. Push a change to the repository and
+press **Sync git** to pick it up — no restart. This repository's own `examples/config` works as a
+first project: `https://github.com/badcodetv/bob`, branch `main`, subfolder `examples/config`.
 
-```sh
-curl -XPOST localhost:8090/api/projects \
-  -d '{"name":"demo","repo_url":"file:///seed","repo_mount":"/abs/path/to/a/git/repo"}'
-curl localhost:8090/api/projects/demo/workers
-curl -XPOST localhost:8090/api/projects/demo/sessions -d '{"worker":"assistant"}'   # → id
-curl -XPOST localhost:8090/api/sessions/<id>/messages -d '{"text":"hello"}'
-curl -N localhost:8090/api/sessions/<id>/stream                                     # SSE
-```
+Private config repositories are cloned with `GITHUB_TOKEN`. For a local repository during
+development, create the project over the API with `"repo_url": "file:///seed"` and
+`"repo_mount": "/abs/path/to/repo"`.
 
-Changed a project's settings or pushed new config? `POST /api/projects/<name>/restart` recreates
-its container (the volume, and so every session, is kept).
+`POST /api/projects/<name>/restart` recreates a project's container (keeping its volume, and so
+every session) — needed after changing the project's own settings or passed-in credentials.
 
 ## API
 
 | | |
 | --- | --- |
+| `GET /api/config` · `POST /api/login` · `POST /api/logout` | Google sign-in; everything else needs the session cookie |
 | `GET/POST /api/projects` | list, create |
 | `POST /api/projects/{p}/restart` | recreate the container, keep the volume |
-| `GET /api/projects/{p}/workers` | workers read from git |
+| `GET /api/projects/{p}/workers` | workers read from git, and the last git sync |
+| `POST /api/projects/{p}/sync` | pull the config folder again, then list workers |
 | `GET/POST /api/projects/{p}/sessions` | list, create `{worker}` |
 | `GET /api/sessions/{id}` | one session |
 | `POST /api/sessions/{id}/messages` | `{text}` → 202; the turn runs in the background |
@@ -64,4 +67,5 @@ payload. Bob's own events are `bob.user_message`, `bob.turn_done` and `bob.turn_
 ```sh
 (cd api && go vet ./... && go test ./...)
 (cd runtime && npx tsc -p . && npm test)
+(cd web && npx tsc -b && npx vite build)
 ```

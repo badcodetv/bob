@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 
+	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/engines"
 	"github.com/badcodetv/bob/internal/runtime"
@@ -17,6 +20,8 @@ import (
 )
 
 type app struct {
+	auth    *auth.Auth
+	webDir  string
 	store   *store.Store
 	broker  *broker.Broker
 	runtime *runtime.Manager
@@ -26,19 +31,75 @@ type app struct {
 }
 
 func (a *app) routes() http.Handler {
+	api := http.NewServeMux()
+	api.HandleFunc("GET /api/projects", a.listProjects)
+	api.HandleFunc("POST /api/projects", a.createProject)
+	api.HandleFunc("POST /api/projects/{project}/restart", a.restartProject)
+	api.HandleFunc("POST /api/projects/{project}/sync", a.syncProject)
+	api.HandleFunc("GET /api/projects/{project}/workers", a.listWorkers)
+	api.HandleFunc("GET /api/projects/{project}/sessions", a.listSessions)
+	api.HandleFunc("POST /api/projects/{project}/sessions", a.createSession)
+	api.HandleFunc("GET /api/sessions/{id}", a.getSession)
+	api.HandleFunc("GET /api/sessions/{id}/events", a.listEvents)
+	api.HandleFunc("GET /api/sessions/{id}/stream", a.streamEvents)
+	api.HandleFunc("POST /api/sessions/{id}/messages", a.sendMessage)
+	api.HandleFunc("POST /api/sessions/{id}/interrupt", a.interrupt)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/projects", a.listProjects)
-	mux.HandleFunc("POST /api/projects", a.createProject)
-	mux.HandleFunc("POST /api/projects/{project}/restart", a.restartProject)
-	mux.HandleFunc("GET /api/projects/{project}/workers", a.listWorkers)
-	mux.HandleFunc("GET /api/projects/{project}/sessions", a.listSessions)
-	mux.HandleFunc("POST /api/projects/{project}/sessions", a.createSession)
-	mux.HandleFunc("GET /api/sessions/{id}", a.getSession)
-	mux.HandleFunc("GET /api/sessions/{id}/events", a.listEvents)
-	mux.HandleFunc("GET /api/sessions/{id}/stream", a.streamEvents)
-	mux.HandleFunc("POST /api/sessions/{id}/messages", a.sendMessage)
-	mux.HandleFunc("POST /api/sessions/{id}/interrupt", a.interrupt)
+	mux.HandleFunc("GET /api/config", a.config)
+	mux.HandleFunc("POST /api/login", a.login)
+	mux.HandleFunc("POST /api/logout", a.logout)
+	mux.Handle("/api/", a.requireLogin(api))
+	if a.webDir != "" {
+		mux.Handle("/", spa(a.webDir))
+	}
 	return mux
+}
+
+// config tells the web app how to sign in, and who is signed in.
+func (a *app) config(w http.ResponseWriter, r *http.Request) {
+	reply(w, map[string]string{"google_client_id": a.auth.ClientID, "email": a.auth.Email(r)}, nil)
+}
+
+func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	var body struct{ Credential string }
+	if !decode(w, r, &body) {
+		return
+	}
+	email, err := a.auth.VerifyGoogle(r.Context(), body.Credential)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	a.auth.SetSession(w, email)
+	reply(w, map[string]string{"email": email}, nil)
+}
+
+func (a *app) logout(w http.ResponseWriter, r *http.Request) {
+	a.auth.ClearSession(w)
+	reply(w, map[string]bool{"ok": true}, nil)
+}
+
+func (a *app) requireLogin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.auth.Email(r) == "" {
+			http.Error(w, "sign in first", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// spa serves the built web app, falling back to index.html for client-side routes.
+func spa(dir string) http.Handler {
+	files := http.FileServer(http.Dir(dir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.Clean("/"+r.URL.Path))); err != nil {
+			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func (a *app) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -65,20 +126,25 @@ func (a *app) restartProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) listWorkers(w http.ResponseWriter, r *http.Request) {
-	workers, err := a.workers(r.Context(), r.PathValue("project"))
-	reply(w, map[string]any{"workers": workers}, err)
+	list, err := a.workers(r.Context(), r.PathValue("project"), false)
+	reply(w, list, err)
 }
 
-func (a *app) workers(ctx context.Context, project string) ([]runtime.Worker, error) {
+func (a *app) syncProject(w http.ResponseWriter, r *http.Request) {
+	list, err := a.workers(r.Context(), r.PathValue("project"), true)
+	reply(w, list, err)
+}
+
+func (a *app) workers(ctx context.Context, project string, sync bool) (runtime.WorkerList, error) {
 	p, err := a.store.Project(ctx, project)
 	if err != nil {
-		return nil, err
+		return runtime.WorkerList{}, err
 	}
 	base, err := a.runtime.Ensure(ctx, p)
 	if err != nil {
-		return nil, err
+		return runtime.WorkerList{}, err
 	}
-	return runtime.Workers(ctx, base)
+	return runtime.Workers(ctx, base, sync)
 }
 
 func (a *app) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -92,12 +158,12 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := r.PathValue("project")
-	workers, err := a.workers(r.Context(), project)
+	list, err := a.workers(r.Context(), project, false)
 	if err != nil {
 		reply(w, nil, err)
 		return
 	}
-	for _, wk := range workers {
+	for _, wk := range list.Workers {
 		if wk.Name == body.Worker {
 			s, err := a.store.CreateSession(r.Context(), project, wk.Name, wk.Engine)
 			reply(w, s, err)
