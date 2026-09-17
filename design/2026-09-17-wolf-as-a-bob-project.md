@@ -729,26 +729,51 @@ changes and can be built and tested offline.
 
 ### Wolf
 
-- [ ] **W1** Create `badcodetv/wolf` (private): layout, `tools/` package, vitest, CI running the
+- [x] **W1** Create `badcodetv/wolf` (private): layout, `tools/` package, vitest, CI running the
       tests, `.gitignore` (`tools/node_modules`, `tools/.cache`).
-- [ ] **W2** Port `spec.ts` → YAML specs, `wolf validate`, `wolf new`; port its tests.
-- [ ] **W3** Port market data + guard + normaliser + fixtures; `wolf search`, `wolf fetch` with
+- [x] **W2** Port `spec.ts` → YAML specs, `wolf validate`, `wolf new`; port its tests.
+- [x] **W3** Port market data + guard + normaliser + fixtures; `wolf search`, `wolf fetch` with
       the shrink guard.
-- [ ] **W4** Port `evaluate.ts` + `points.ts`; `wolf evaluate`, `evaluation.json`,
+- [x] **W4** Port `evaluate.ts` + `points.ts`; `wolf evaluate`, `evaluation.json`,
       `evaluations.jsonl`, challenge snapshots, horizon-elapsed transition.
-- [ ] **W5** `history.jsonl` + lifecycle; `wolf golive`, `verdict`, `archive`, `amend`.
-- [ ] **W6** `wolf check` (all six rules, tested against a scripted git history) + the GitHub
+- [x] **W5** `history.jsonl` + lifecycle; `wolf golive`, `verdict`, `archive`, `amend`.
+- [x] **W6** `wolf check` (all six rules, tested against a scripted git history) + the GitHub
       Action.
-- [ ] **W7** `wolf render`: board, hypothesis page, SVG charts; snapshot tests; verify pages
+- [x] **W7** `wolf render`: board, hypothesis page, SVG charts; snapshot tests; verify pages
       display with scripts disabled.
-- [ ] **W8** `wolf daily`.
-- [ ] **W9** `bob/skills/wolf/SKILL.md`, `method.md`, and the three workers.
-- [ ] **W10** Offline proof: one real hypothesis (gold, `GC=F`, plus FRED `DFII10`) taken from
+- [x] **W8** `wolf daily`.
+- [x] **W9** `bob/skills/wolf/SKILL.md`, `method.md`, and the three workers.
+- [x] **W10** Offline proof: one real hypothesis (gold, `GC=F`, plus FRED `DFII10`) taken from
       `wolf new` to `live` by hand in a local checkout; `wolf daily` run on three separate days
       (or with an injected `--now`); a hand-edited `spec.yaml` caught by `wolf check` in CI.
-- [ ] **W11** Local Bob: create project `wolf`, chat a new hypothesis to go-live as a
+- [x] **W11** Local Bob: create project `wolf`, chat a new hypothesis to go-live as a
       non-admin tester from `BOB_PROJECT_MAP`, create both schedules, Run now, see the board
       update in Files after Refresh.
+
+**As built (2026-09-17, W1–W11, `badcodetv/wolf`):**
+- The CLI runs as `./wolf <command>` from the repository root (a wrapper that installs `tools/` on
+  first use), not `npm --prefix tools run wolf`, whose banner line would spoil `--json` output.
+- Tests sit beside the code (`tools/src/**/*.test.ts`), and the ported folders keep old Wolf's
+  shape (`src/hypothesis/`, `src/marketdata/`). 388 tests; CI runs them and `wolf check` on every
+  push, to any branch.
+- `tools/.npmrc` sets `legacy-peer-deps` (npm 10 crashed resolving vitest 4's peers).
+- The on-disk fetch cache became an in-process one: a run is one process.
+- `wolf fetch` reaches back 400 days before go-live and records each metric's last fetch in
+  `data/fetch.json`, which is how "failed two runs running" is seen.
+- Needs attention does not flag a young hypothesis whose conditions are short of observations only
+  because their window still reaches back before go-live (found in W10).
+- W10: a real gold/DFII10 hypothesis went live from a local checkout, `wolf daily` ran for three
+  injected days, and a hand-edited locked spec pushed to a throwaway branch opened a
+  "wolf check failed" issue within a minute (then closed, branch deleted).
+- W11: local Bob, project `wolf` (`subfolder bob`, `files_root site`), GitHub access with Kai's own
+  classic token (`repo` scope) in `GITHUB_TOKEN`. As `tester@example.com` (member of demo and wolf
+  only: 404 on other projects, 403 creating a schedule), a chat drafted `gold-6m`, asked for an
+  explicit yes before go-live, and pushed both commits authored by the tester and committed by Bob.
+  Both schedules were created; Run now on `daily-research` fetched, evaluated, wrote a note and
+  pushed as `schedule:<id>`; the board showed it in Files after Refresh. The first note guessed an
+  observation count, so the daily summary now carries each condition's reason and coverage.
+  `gold-6m` on `main` is test data from this run.
+
 - [ ] **W12** Decide and, if chosen, migrate old Wolf's live hypotheses (Part G).
 - [ ] **W13** Deploy with new Bob on the box; retire old Wolf (Part H).
 
