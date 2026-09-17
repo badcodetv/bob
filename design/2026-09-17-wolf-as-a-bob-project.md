@@ -717,7 +717,7 @@ changes and can be built and tested offline.
 - [ ] **A3** Git push credentials in the container + README push convention (§A3).
 - [x] **A4a** Schedules table, due-computation, run loop with no-overlap and catch-up (§A4).
 - [x] **A4b** Schedules API, manual run, post-run sync, `keep_sessions` pruning.
-- [ ] **A4c** Schedules page in the web app.
+- [x] **A4c** Schedules page in the web app.
 - [x] **A5a** Runtime `GET /files/…` with path safety tests.
 - [x] **A5b** API proxy with the fixed CSP header and access checks.
 - [ ] **A5c** Files page: browser, sandboxed viewer, `files_root`, Refresh.

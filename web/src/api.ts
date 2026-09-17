@@ -7,7 +7,19 @@ export interface Session {
   id: string; project: string; worker: string; engine: string; harness_session_id: string; model: string; effort: string; created_at: string
   // Only on the project's session list: the first message, messages sent, and the last activity.
   title?: string; messages?: number; last_active_at?: string
+  /** The schedule that started this chat, if one did. */
+  schedule?: string
 }
+export interface Schedule {
+  id: string; project: string; name: string; worker: string; cron: string; timezone: string; message: string
+  enabled: boolean; keep_sessions: number; created_at: string
+}
+export interface ScheduleRun {
+  id: number; schedule_id: string; session_id: string | null; trigger: 'cron' | 'manual'
+  status: 'running' | 'ok' | 'failed' | 'skipped'; detail: string; started_at: string; finished_at: string | null
+}
+export interface ScheduleView extends Schedule { next_at: string | null; last_run: ScheduleRun | null }
+export type ScheduleInput = Pick<Schedule, 'name' | 'worker' | 'cron' | 'timezone' | 'message' | 'enabled' | 'keep_sessions'>
 export interface Settings { model: string; effort: string }
 export interface BobEvent { id: number; session_id: string; engine: string; kind: string; payload: any; created_at: string }
 
@@ -46,4 +58,12 @@ export const api = {
   session: (id: string) => call<Session>('GET', `/api/sessions/${id}`),
   send: (id: string, text: string) => call<BobEvent>('POST', `/api/sessions/${id}/messages`, { text }),
   interrupt: (id: string) => call('POST', `/api/sessions/${id}/interrupt`),
+  schedules: (project: string) => call<{ schedules: ScheduleView[]; paused: boolean }>('GET', `/api/projects/${project}/schedules`),
+  createSchedule: (project: string, s: ScheduleInput) => call<Schedule>('POST', `/api/projects/${project}/schedules`, s),
+  updateSchedule: (id: string, s: Partial<ScheduleInput>) => call<Schedule>('PATCH', `/api/schedules/${id}`, s),
+  deleteSchedule: (id: string) => call('DELETE', `/api/schedules/${id}`),
+  runSchedule: (id: string) => call<ScheduleRun>('POST', `/api/schedules/${id}/run`),
+  scheduleRuns: (id: string) => call<{ runs: ScheduleRun[] }>('GET', `/api/schedules/${id}/runs`).then((r) => r.runs),
+  settings: () => call<{ schedules_paused: boolean }>('GET', '/api/settings'),
+  updateSettings: (s: { schedules_paused: boolean }) => call<{ schedules_paused: boolean }>('PATCH', '/api/settings', s),
 }

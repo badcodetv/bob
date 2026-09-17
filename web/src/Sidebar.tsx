@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react'
-import { ChevronDownIcon, LayoutGridIcon, PlusIcon, RefreshCwIcon } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { ChevronDownIcon, ClockIcon, LayoutGridIcon, PlusIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { api, type Project, type Session, type WorkerList } from './api'
-import type { Activity } from './App'
+import type { Activity, Page } from './App'
 import { ago, engineName, Menu, MenuItem, MenuSeparator, when, WorkerBadge } from './ui'
 
 const SHOWN_CHATS = 5
 
-export function Sidebar({ email, admin, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, onOverview, onSync, onError, onProjectCreated, onSignOut }: {
+export function Sidebar({ email, admin, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, page, onSync, onError, onProjectCreated, onSignOut }: {
   email: string
   admin: boolean
   projects: Project[]
@@ -21,7 +21,7 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
   syncedAt?: Date
   currentSession?: string
   currentWorker?: string
-  onOverview: boolean
+  page: Page
   onSync: () => void
   onError: (e: unknown) => void
   onProjectCreated: (name: string) => void
@@ -58,13 +58,10 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
 
       <nav className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-3 pt-2.5 pb-4">
         {project && (
-          <a href={`#/p/${project}`} className={cn(
-            'text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2.5 rounded-lg px-2 py-1.5 font-medium',
-            onOverview && 'bg-muted text-foreground',
-          )}>
-            <span className="grid w-[22px] place-items-center"><LayoutGridIcon className="size-4" /></span>
-            Overview
-          </a>
+          <div className="flex flex-col gap-px">
+            <NavLink href={`#/p/${project}`} active={page === 'overview'} icon={<LayoutGridIcon className="size-4" />}>Overview</NavLink>
+            <NavLink href={`#/p/${project}/schedules`} active={page === 'schedules'} icon={<ClockIcon className="size-4" />}>Schedules</NavLink>
+          </div>
         )}
 
         {project && workers?.error && <p className="text-destructive px-2 text-xs">{workers.error}</p>}
@@ -98,7 +95,9 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
                         'text-muted-foreground hover:bg-accent hover:text-foreground flex items-baseline gap-2 rounded-r-md border-l py-[5px] pr-2 pl-3 text-[13.5px]',
                         s.id === currentSession && 'bg-muted text-foreground font-medium',
                       )}>
-                        <span className={cn('min-w-0 flex-1 truncate', !s.title && 'italic')}>{s.title || 'Empty chat'}</span>
+                        {s.schedule
+                          ? <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate" title={s.title}><ClockIcon className="text-faint size-3 shrink-0" />{s.schedule}</span>
+                          : <span className={cn('min-w-0 flex-1 truncate', !s.title && 'italic')}>{s.title || 'Empty chat'}</span>}
                         <time className="text-faint shrink-0 text-[11.5px] tabular-nums">{when(s.last_active_at ?? s.created_at)}</time>
                       </a>
                     </li>
@@ -125,6 +124,18 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
 
       <CreateProject open={creating} onOpenChange={setCreating} onError={onError} onCreated={(name) => { setCreating(false); onProjectCreated(name) }} />
     </aside>
+  )
+}
+
+function NavLink({ href, active, icon, children }: { href: string; active: boolean; icon: ReactNode; children: ReactNode }) {
+  return (
+    <a href={href} className={cn(
+      'text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2.5 rounded-lg px-2 py-1.5 font-medium',
+      active && 'bg-muted text-foreground',
+    )}>
+      <span className="grid w-[22px] place-items-center">{icon}</span>
+      {children}
+    </a>
   )
 }
 

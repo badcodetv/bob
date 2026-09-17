@@ -321,3 +321,21 @@ func TestScheduleFailuresAndPruning(t *testing.T) {
 		t.Errorf("a pruned session's run should lose its link: %+v", rs[2])
 	}
 }
+
+func TestScheduledSessionsAreNamed(t *testing.T) {
+	a, _, _ := newScheduleApp(t)
+	sch := create(t, a, store.Schedule{Name: "daily-research", Cron: "0 6 * * *"})
+	if _, err := a.fire(t.Context(), sch, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	a.scheduled.Wait()
+	a.store.CreateSession(t.Context(), "wolf", "researcher", "claude", "", "")
+	list, err := a.store.Sessions(t.Context(), "wolf")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("sessions: %v %v", list, err)
+	}
+	names := map[string]bool{list[0].Schedule: true, list[1].Schedule: true}
+	if !names["daily-research"] || !names[""] {
+		t.Errorf("schedule names on the list: %q, %q", list[0].Schedule, list[1].Schedule)
+	}
+}

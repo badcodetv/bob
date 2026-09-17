@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, Unauthorized, type Config, type Project, type Session, type Worker, type WorkerList } from './api'
 import { Chat, NewChat } from './Chat'
 import { Overview } from './Overview'
+import { Schedules } from './Schedules'
 import { Sidebar } from './Sidebar'
 import { DrawerContext } from './ui'
 import { cn } from '@/lib/utils'
 
 // Routes are the URL hash: #/ · #/p/<project> (its overview) · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
+// · #/p/<project>/schedules
 function useHash() {
   const [hash, setHash] = useState(window.location.hash.slice(1) || '/')
   useEffect(() => {
@@ -27,6 +29,9 @@ export default function App() {
   return <Signed email={config.email} admin={config.admin} onSignedOut={() => setConfig({ ...config, email: '', admin: false })} />
 }
 
+/** Which of a project's pages is open. */
+export type Page = 'overview' | 'schedules' | 'chat'
+
 /** What the sidebar says the project is doing right now. */
 export type Activity = '' | 'starting' | 'syncing'
 
@@ -35,6 +40,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
   const [, , project, mode, id] = hash.split('/')
   const session = mode === 's' ? id : undefined
   const newWorker = mode === 'new' ? id : undefined
+  const page: Page = session || newWorker ? 'chat' : mode === 'schedules' ? 'schedules' : 'overview'
   const [drawer, setDrawer] = useState(false)
   useEffect(() => { setDrawer(false) }, [hash])
 
@@ -83,7 +89,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
         )}>
           <Sidebar email={email} admin={admin} projects={projects} project={project} workers={workers} sessions={sessions}
             activity={activity} syncedAt={syncedAt} currentSession={session} currentWorker={newWorker}
-            onOverview={!session && !newWorker} onSync={sync} onError={guard}
+            page={page} onSync={sync} onError={guard}
             onProjectCreated={(name) => { loadProjects(); window.location.hash = `/p/${name}` }}
             onSignOut={() => api.logout().then(onSignedOut)} />
         </div>
@@ -98,6 +104,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
                 loadSessions()
                 window.location.hash = `/p/${project}/s/${s.id}`
               }} />
+            : project && page === 'schedules' ? <Schedules key={project} project={project} admin={admin} workers={workers} onRan={loadSessions} onError={guard} />
             : project ? <Overview key={project} name={project} admin={admin} workers={workers} sessions={sessions} activity={activity}
                 syncedAt={syncedAt} onSync={sync} onError={guard}
                 onDeleted={() => { loadProjects(); window.location.hash = '/' }} />

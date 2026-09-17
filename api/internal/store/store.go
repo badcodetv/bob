@@ -142,6 +142,8 @@ type Session struct {
 	Title        string     `json:"title,omitempty"`
 	Messages     int        `json:"messages,omitempty"`
 	LastActiveAt *time.Time `json:"last_active_at,omitempty"`
+	// Schedule is the name of the schedule that started this chat, if one did (list only).
+	Schedule string `json:"schedule,omitempty"`
 }
 
 const sessionCols = `id, project, worker, engine, harness_session_id, model, effort, created_at`
@@ -185,7 +187,8 @@ func (s *Store) Sessions(ctx context.Context, project string) ([]Session, error)
 	rows, err := s.db.Query(ctx, `SELECT s.id, s.project, s.worker, s.engine, s.harness_session_id, s.model, s.effort, s.created_at,
 			COALESCE((SELECT e.payload->>'text' FROM events e WHERE e.session_id = s.id AND e.kind = 'bob.user_message' ORDER BY e.id LIMIT 1), ''),
 			(SELECT count(*) FROM events e WHERE e.session_id = s.id AND e.kind = 'bob.user_message'),
-			COALESCE((SELECT max(e.created_at) FROM events e WHERE e.session_id = s.id), s.created_at) AS last_active
+			COALESCE((SELECT max(e.created_at) FROM events e WHERE e.session_id = s.id), s.created_at) AS last_active,
+			COALESCE((SELECT sc.name FROM schedules sc WHERE sc.id = s.schedule_id), '')
 		FROM sessions s WHERE s.project = $1 ORDER BY last_active DESC`, project)
 	if err != nil {
 		return nil, err
@@ -194,7 +197,7 @@ func (s *Store) Sessions(ctx context.Context, project string) ([]Session, error)
 		var x Session
 		var last time.Time
 		err := row.Scan(&x.ID, &x.Project, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt,
-			&x.Title, &x.Messages, &last)
+			&x.Title, &x.Messages, &last, &x.Schedule)
 		x.LastActiveAt = &last
 		return x, err
 	})

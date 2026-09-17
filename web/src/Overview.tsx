@@ -163,7 +163,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function Section({ title, count, action, children }: { title: string; count?: number; action?: ReactNode; children: ReactNode }) {
+export function Section({ title, count, action, children }: { title: string; count?: number; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2.5">
       <div className="border-foreground flex items-baseline gap-2 border-b pb-2">
@@ -185,6 +185,6 @@ function SetupRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function Empty({ children }: { children: ReactNode }) {
+export function Empty({ children }: { children: ReactNode }) {
   return <p className="text-muted-foreground px-2 py-3 text-sm">{children}</p>
 }

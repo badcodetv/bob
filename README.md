@@ -90,6 +90,10 @@ status (`running`, `ok`, `failed`, `skipped`) and its chat.
   **Run now** still works while paused or disabled, because a person asked for it.
 - A run that was going when Bob stopped is marked failed when Bob starts again.
 
+In the web app, **Schedules** (sidebar) lists each schedule with its timing in words, the next
+firing, the last run and a link to its chat, **Run now**, and — for admins — turn on/off, edit,
+delete and **Pause all schedules**. Chats a schedule started show its name with a clock.
+
 ## Who can use what
 
 `BOB_PROJECT_MAP` (or a file named by `BOB_PROJECT_MAP_FILE`; the inline one wins) lists who may
