@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api, Unauthorized, type Project, type Session, type WorkerList } from './api'
-import { Chat } from './Chat'
+import { Chat, NewChat } from './Chat'
 
-// Routes are the URL hash: #/ · #/p/<project> · #/p/<project>/s/<session>
+// Routes are the URL hash: #/ · #/p/<project> · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
 function useHash() {
   const [hash, setHash] = useState(window.location.hash.slice(1) || '/')
   useEffect(() => {
@@ -26,7 +26,10 @@ export default function App() {
 
 function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void }) {
   const hash = useHash()
-  const [, , project, , session] = hash.split('/')
+  const [, , project, mode, id] = hash.split('/')
+  const session = mode === 's' ? id : undefined
+  const newWorker = mode === 'new' ? id : undefined
+  const [sessionsVersion, setSessionsVersion] = useState(0)
   const guard = useCallback((err: unknown) => {
     if (err instanceof Unauthorized) onSignedOut()
     else alert(String((err as Error)?.message ?? err))
@@ -37,14 +40,19 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
       <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r p-4 text-sm">
         <a href="#/" className="text-lg font-semibold">Bob</a>
         <Projects current={project} onError={guard} />
-        {project && <ProjectPanel key={project} project={project} currentSession={session} onError={guard} />}
+        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} onError={guard} />}
         <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate">{email}</span>
           <Button variant="ghost" size="sm" onClick={() => api.logout().then(onSignedOut)}>Sign out</Button>
         </div>
       </aside>
       <main className="min-w-0 flex-1">
-        {session ? <SessionView id={session} onError={guard} /> : <Empty project={project} />}
+        {session ? <SessionView id={session} onError={guard} />
+          : project && newWorker ? <NewChat key={newWorker} project={project} worker={newWorker} onCreated={(s) => {
+              setSessionsVersion((v) => v + 1)
+              window.location.hash = `/p/${project}/s/${s.id}`
+            }} />
+          : <Empty project={project} />}
       </main>
     </div>
   )
@@ -99,7 +107,9 @@ function CreateProject({ onDone, onError }: { onDone: (name?: string) => void; o
   )
 }
 
-function ProjectPanel({ project, currentSession, onError }: { project: string; currentSession?: string; onError: (e: unknown) => void }) {
+function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, onError }: {
+  project: string; currentSession?: string; currentWorker?: string; sessionsVersion: number; onError: (e: unknown) => void
+}) {
   const [list, setList] = useState<WorkerList | null>(null)
   const [sessions, setSessions] = useState<Session[]>([])
   const [busy, setBusy] = useState('')
@@ -108,15 +118,13 @@ function ProjectPanel({ project, currentSession, onError }: { project: string; c
   useEffect(() => {
     setBusy('Starting project…')
     api.workers(project).then(setList).catch(onError).finally(() => setBusy(''))
-    loadSessions()
-  }, [project, onError, loadSessions])
+  }, [project, onError])
+  useEffect(() => { loadSessions() }, [loadSessions, sessionsVersion])
 
   const sync = () => {
     setBusy('Pulling from git…')
     api.sync(project).then(setList).catch(onError).finally(() => setBusy(''))
   }
-  const start = (worker: string) =>
-    api.createSession(project, worker).then((s) => { loadSessions(); window.location.hash = `/p/${project}/s/${s.id}` }).catch(onError)
 
   return (
     <>
@@ -130,11 +138,11 @@ function ProjectPanel({ project, currentSession, onError }: { project: string; c
         {list?.sync.commit && <p className="truncate text-xs text-muted-foreground" title={list.sync.commit}>at {list.sync.commit}</p>}
         {list?.error && <p className="text-xs text-destructive">{list.error}</p>}
         {list?.workers.map((w) => (
-          <button key={w.name} onClick={() => start(w.name)} title={w.prompt}
-            className="flex items-center justify-between rounded px-2 py-1 text-left hover:bg-muted">
+          <a key={w.name} href={`#/p/${project}/new/${w.name}`} title={w.prompt}
+            className={`flex items-center justify-between rounded px-2 py-1 hover:bg-muted ${w.name === currentWorker ? 'bg-muted font-medium' : ''}`}>
             <span>{w.name}</span>
             <span className="text-xs text-muted-foreground">{w.engine}{w.model ? ` · ${w.model}` : ''}</span>
-          </button>
+          </a>
         ))}
         {list && list.sync.ok && list.workers.length === 0 && <p className="text-xs text-muted-foreground">No workers/*.md in this folder yet.</p>}
       </section>

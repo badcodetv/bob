@@ -10,9 +10,14 @@ export function claudeMessages(events: BobEvent[], live: string): ThreadMessageL
   const out: ThreadMessageLike[] = []
   let assistant: { id: string; content: Part[] } | null = null
   const tools = new Map<string, ToolCall>()
+  // A turn's reply keeps one id from its first streamed token to its last stored event, named
+  // after the user message that started the turn. A changing id makes assistant-ui treat the
+  // reply as a new branch ("2 / 2") and remount it (the flicker).
+  let turnId = 'start'
 
-  const openAssistant = (id: string) => {
+  const openAssistant = () => {
     if (!assistant) {
+      const id = `reply-${turnId}`
       assistant = { id, content: [] }
       out.push({ id, role: 'assistant', content: assistant.content })
     }
@@ -28,11 +33,12 @@ export function claudeMessages(events: BobEvent[], live: string): ThreadMessageL
     switch (e.kind) {
       case 'bob.user_message':
         assistant = null
+        turnId = String(e.id)
         out.push({ id: `e${e.id}`, role: 'user', content: [{ type: 'text', text: p.text }] })
         break
       case 'assistant':
         for (const block of p.message?.content ?? []) {
-          const a = openAssistant(`e${e.id}`)
+          const a = openAssistant()
           if (block.type === 'text') a.content.push({ type: 'text', text: block.text })
           else if (block.type === 'thinking' && block.thinking) a.content.push({ type: 'reasoning', text: block.thinking })
           else if (block.type === 'tool_use') {
@@ -53,11 +59,11 @@ export function claudeMessages(events: BobEvent[], live: string): ThreadMessageL
         }
         break
       case 'bob.turn_failed':
-        openAssistant(`e${e.id}`).content.push({ type: 'text', text: `⚠️ ${p.error}` })
+        openAssistant().content.push({ type: 'text', text: `⚠️ ${p.error}` })
         break
     }
   }
-  if (live) openAssistant('live').content.push({ type: 'text', text: live })
+  if (live) openAssistant().content.push({ type: 'text', text: live })
   return out
 }
 

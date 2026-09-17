@@ -66,3 +66,40 @@ export function Chat({ session }: { session: Session }) {
     </TooltipProvider>
   )
 }
+
+/**
+ * A chat that does not exist yet. Picking a worker opens this; the session is only created
+ * when the first message is sent, so browsing workers leaves no empty chats behind.
+ */
+export function NewChat({ project, worker, onCreated }: { project: string; worker: string; onCreated: (s: Session) => void }) {
+  const [pending, setPending] = useState<string | null>(null)
+  const messages = useMemo<ThreadMessageLike[]>(
+    () => (pending === null ? [] : [{ id: 'pending', role: 'user', content: [{ type: 'text', text: pending }] }]),
+    [pending],
+  )
+  const runtime = useExternalStoreRuntime<ThreadMessageLike>({
+    messages,
+    isRunning: pending !== null,
+    convertMessage: (m) => m,
+    onNew: async (m) => {
+      const text = m.content.map((p) => (p.type === 'text' ? p.text : '')).join('')
+      if (!text.trim()) return
+      setPending(text)
+      try {
+        const session = await api.createSession(project, worker)
+        await api.send(session.id, text)
+        onCreated(session)
+      } catch (err) {
+        setPending(null)
+        alert(String((err as Error)?.message ?? err))
+      }
+    },
+  })
+  return (
+    <TooltipProvider>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <Thread />
+      </AssistantRuntimeProvider>
+    </TooltipProvider>
+  )
+}
