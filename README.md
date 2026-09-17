@@ -43,7 +43,18 @@ tools run in. Changing `BOB_SESSION_SECRET` means restarting every project.
 
 Each chat works in its own git worktree of the project's repository (`/project/work/<session>`,
 branch `bob/<session>`), so it can read and change the code without affecting other chats.
-Deleting the chat removes the worktree and the branch. Nothing is pushed.
+Deleting the chat removes the worktree and the branch.
+
+**Pushing work.** A chat's commits stay on its own branch until it publishes them. The image has
+`bob-push [ref]` for that: `git pull --rebase origin <ref>`, then `git push origin HEAD:<ref>`,
+pulling and retrying up to 3 times when another chat pushed first. A rebase conflict stops it
+and names the files; after fixing them and `git add`, running `bob-push` again finishes the
+rebase and pushes. Tell workers to use it (or run those two git commands themselves). Git reaches
+`github.com` with `GITHUB_TOKEN`, read from the environment by a credential helper each time git
+asks — the token is never written to a file, and never sent to other hosts. To push, the token
+needs **Contents: read and write** on the repository (a fine-grained token; a project can have its
+own as a secret). The token imported from agent-bob can read but was refused a push to
+`badcodetv/bob` on 2026-09-17, so a pushing project needs a new one.
 
 A turn knows who it is for. Its tools see `BOB_USER_EMAIL` and `BOB_USER_NAME` (the signed-in
 person; a scheduled turn has `schedule:<schedule id>` and the schedule's name), and a commit made
@@ -52,7 +63,7 @@ by Bob, not taken from the conversation. They are a courtesy, not proof: the age
 change environment variables and git authors. The record of who sent each message is Bob's
 `bob.user_message` event (`user_email`, `user_name`), written outside the container.
 
-Private config repositories are cloned with `GITHUB_TOKEN`. For a local repository during
+Private repositories on github.com are cloned with `GITHUB_TOKEN`. For a local repository during
 development, create the project over the API with `"repo_url": "file:///seed"` and
 `"repo_mount": "/abs/path/to/repo"`.
 
