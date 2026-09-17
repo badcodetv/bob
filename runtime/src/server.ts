@@ -4,6 +4,7 @@
 //   GET  /workers                      the project's workers, read from git, plus the last sync
 //   POST /sync                         pull the project's git folder again
 //   DELETE /sessions/<id>              remove a session's worktree and branch
+//   GET  /files/<path>                 a file from the synced checkout, or a directory's {entries}
 //   POST /turns {session_id, worker, text, resume?, model?, effort?, user_email?, user_name?}
 //        → application/x-ndjson: {"engine", "event"} per harness event, then
 //          {"done": true, "harness_session_id"} or {"done": true, "error"}
@@ -15,6 +16,7 @@ import { join } from 'node:path';
 import { loadWorkers, type Worker } from './workers.js';
 import { runClaudeTurn } from './claude.js';
 import { prepareWorkdir, removeWorkdir } from './workdir.js';
+import { listDir, openFile, resolveRepoPath } from './files.js';
 import type { Turn, TurnResult } from './turn.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -40,12 +42,21 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return sendJSON(res, 200, await workers());
   }
   if (req.method === 'POST' && req.url === '/turns') return turn(req, res);
+  if (req.method === 'GET' && (req.url === '/files' || req.url?.startsWith('/files/') || req.url?.startsWith('/files?'))) return files(req, res);
   const del = /^\/sessions\/([\w-]+)$/.exec(req.url ?? '');
   if (req.method === 'DELETE' && del) {
     await removeWorkdir(PROJECT_DIR, join(PROJECT_DIR, 'repo'), del[1]);
     return sendJSON(res, 200, { ok: true });
   }
   sendJSON(res, 404, { error: 'not found' });
+}
+
+async function files(req: IncomingMessage, res: ServerResponse) {
+  const found = await resolveRepoPath(join(PROJECT_DIR, 'repo'), (req.url ?? '').replace(/^\/files\/?/, ''));
+  if (!found) return sendJSON(res, 404, { error: 'not found' });
+  if (found.kind === 'dir') return sendJSON(res, 200, await listDir(found.path));
+  res.writeHead(200, { 'content-type': found.type, 'content-length': found.size });
+  openFile(found.path).on('error', () => res.destroy()).pipe(res);
 }
 
 async function workers() {
