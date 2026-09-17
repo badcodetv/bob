@@ -1,0 +1,12 @@
+# Local development: Postgres only. Run the API on the host (see README).
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: bob
+      POSTGRES_PASSWORD: bob
+      POSTGRES_DB: bob
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+volumes:
+  pgdata:
