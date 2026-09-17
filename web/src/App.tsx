@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { api, Unauthorized, type Project, type Session, type Worker, type WorkerList } from './api'
+import { api, Unauthorized, type Config, type Project, type Session, type Worker, type WorkerList } from './api'
 import { Chat, NewChat } from './Chat'
 import { ProjectSettings } from './ProjectSettings'
 
@@ -17,15 +17,16 @@ function useHash() {
 }
 
 export default function App() {
-  const [config, setConfig] = useState<{ google_client_id: string; email: string } | null>(null)
-  useEffect(() => { api.config().then(setConfig) }, [])
+  const [config, setConfig] = useState<Config | null>(null)
+  const load = useCallback(() => { api.config().then(setConfig) }, [])
+  useEffect(load, [load])
   if (!config) return null
-  if (!config.email) return <SignIn clientId={config.google_client_id} onSignedIn={(email) => setConfig({ ...config, email })} />
+  if (!config.email) return <SignIn clientId={config.google_client_id} onSignedIn={load} />
 
-  return <Signed email={config.email} onSignedOut={() => setConfig({ ...config, email: '' })} />
+  return <Signed email={config.email} admin={config.admin} onSignedOut={() => setConfig({ ...config, email: '', admin: false })} />
 }
 
-function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void }) {
+function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; onSignedOut: () => void }) {
   const hash = useHash()
   const [, , project, mode, id] = hash.split('/')
   const session = mode === 's' ? id : undefined
@@ -44,8 +45,8 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
     <div className="flex h-screen">
       <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r p-4 text-sm">
         <a href="#/" className="text-lg font-semibold">Bob</a>
-        <Projects current={project} version={projectsVersion} onError={guard} />
-        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} workers={workers} onWorkers={setWorkers} onError={guard}
+        <Projects current={project} version={projectsVersion} admin={admin} onError={guard} />
+        {project && <ProjectPanel key={project} project={project} admin={admin} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} workers={workers} onWorkers={setWorkers} onError={guard}
           onProjectDeleted={() => { setProjectsVersion((v) => v + 1); window.location.hash = '/' }} />}
         <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate">{email}</span>
@@ -75,7 +76,7 @@ function Empty({ project }: { project?: string }) {
   )
 }
 
-function Projects({ current, version, onError }: { current?: string; version: number; onError: (e: unknown) => void }) {
+function Projects({ current, version, admin, onError }: { current?: string; version: number; admin: boolean; onError: (e: unknown) => void }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [creating, setCreating] = useState(false)
   const load = useCallback(() => api.projects().then(setProjects).catch(onError), [onError])
@@ -89,7 +90,7 @@ function Projects({ current, version, onError }: { current?: string; version: nu
       ))}
       {creating
         ? <CreateProject onDone={(name) => { setCreating(false); if (name) { load(); window.location.hash = `/p/${name}` } }} onError={onError} />
-        : <Button variant="outline" size="sm" onClick={() => setCreating(true)}>New project</Button>}
+        : admin && <Button variant="outline" size="sm" onClick={() => setCreating(true)}>New project</Button>}
     </section>
   )
 }
@@ -116,8 +117,8 @@ function CreateProject({ onDone, onError }: { onDone: (name?: string) => void; o
   )
 }
 
-function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, workers: list, onWorkers: setList, onError, onProjectDeleted }: {
-  project: string; currentSession?: string; currentWorker?: string; sessionsVersion: number
+function ProjectPanel({ project, admin, currentSession, currentWorker, sessionsVersion, workers: list, onWorkers: setList, onError, onProjectDeleted }: {
+  project: string; admin: boolean; currentSession?: string; currentWorker?: string; sessionsVersion: number
   workers: WorkerList | null; onWorkers: (l: WorkerList) => void; onError: (e: unknown) => void; onProjectDeleted: () => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -140,7 +141,7 @@ function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion,
     <>
       <div className="flex items-center justify-between border-t pt-3">
         <span className="font-medium">{project}</span>
-        <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>
+        {admin && <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>}
       </div>
       <ProjectSettings name={project} open={settingsOpen} onOpenChange={setSettingsOpen} onError={onError}
         onSaved={sync} onDeleted={onProjectDeleted} />
@@ -187,7 +188,7 @@ declare global {
   interface Window { google?: any }
 }
 
-function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: (email: string) => void }) {
+function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: () => void }) {
   const [error, setError] = useState('')
   useEffect(() => {
     const script = document.createElement('script')
@@ -196,7 +197,7 @@ function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: (email
       window.google.accounts.id.initialize({
         client_id: clientId,
         callback: (r: { credential: string }) =>
-          api.login(r.credential).then((x) => onSignedIn(x.email)).catch((e) => setError(e.message)),
+          api.login(r.credential).then(() => onSignedIn()).catch((e) => setError(e.message)),
       })
       window.google.accounts.id.renderButton(document.getElementById('google-button'), { theme: 'outline', size: 'large' })
     }

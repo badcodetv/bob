@@ -9,7 +9,7 @@ import (
 )
 
 func TestSessionCookieRoundTrip(t *testing.T) {
-	a := &Auth{Secret: []byte("s"), Allowed: map[string]bool{"kai@example.com": true}}
+	a := &Auth{Secret: []byte("s"), Allowed: func(e string) bool { return e == "kai@example.com" }}
 	rec := httptest.NewRecorder()
 	a.SetSession(rec, "kai@example.com")
 	req := httptest.NewRequest("GET", "/", nil)
@@ -22,7 +22,7 @@ func TestSessionCookieRoundTrip(t *testing.T) {
 	if got := other.Email(req); got != "" {
 		t.Fatalf("cookie signed with another secret accepted: %q", got)
 	}
-	removed := &Auth{Secret: a.Secret, Allowed: map[string]bool{}}
+	removed := &Auth{Secret: a.Secret, Allowed: func(string) bool { return false }}
 	if got := removed.Email(req); got != "" {
 		t.Fatalf("cookie for a no-longer-allowed email accepted: %q", got)
 	}
@@ -43,7 +43,7 @@ func TestVerifyGoogle(t *testing.T) {
 		fmt.Fprintf(w, `{"aud":%q,"email":%q,"email_verified":"true"}`, aud, email)
 	}))
 	defer google.Close()
-	a := &Auth{ClientID: "client", Allowed: map[string]bool{"kai@example.com": true}, TokenInfoURL: google.URL}
+	a := &Auth{ClientID: "client", Allowed: func(e string) bool { return e == "kai@example.com" }, TokenInfoURL: google.URL}
 
 	if email, err := a.VerifyGoogle(t.Context(), "good"); err != nil || email != "kai@example.com" {
 		t.Fatalf("good token: %q, %v", email, err)
