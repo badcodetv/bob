@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ChevronDownIcon, ClockIcon, LayoutGridIcon, PlusIcon, RefreshCwIcon } from 'lucide-react'
+import { ChevronDownIcon, ClockIcon, FolderOpenIcon, LayoutGridIcon, PlusIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -60,6 +60,7 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
         {project && (
           <div className="flex flex-col gap-px">
             <NavLink href={`#/p/${project}`} active={page === 'overview'} icon={<LayoutGridIcon className="size-4" />}>Overview</NavLink>
+            <NavLink href={`#/p/${project}/files`} active={page === 'files'} icon={<FolderOpenIcon className="size-4" />}>Files</NavLink>
             <NavLink href={`#/p/${project}/schedules`} active={page === 'schedules'} icon={<ClockIcon className="size-4" />}>Schedules</NavLink>
           </div>
         )}

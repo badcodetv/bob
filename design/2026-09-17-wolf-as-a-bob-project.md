@@ -720,7 +720,7 @@ changes and can be built and tested offline.
 - [x] **A4c** Schedules page in the web app.
 - [x] **A5a** Runtime `GET /files/…` with path safety tests.
 - [x] **A5b** API proxy with the fixed CSP header and access checks.
-- [ ] **A5c** Files page: browser, sandboxed viewer, `files_root`, Refresh.
+- [x] **A5c** Files page: browser, sandboxed viewer, `files_root`, Refresh.
 - [ ] **A6** Add `FRED_API_KEY` to the pass-through list for local and box config.
 
 ### Wolf

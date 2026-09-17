@@ -72,6 +72,8 @@ type Project struct {
 	Subfolder string    `json:"subfolder"`
 	Image     string    `json:"image"`
 	RepoMount string    `json:"repo_mount,omitempty"`
+	// FilesRoot is the repository folder the Files page opens on; empty = the root.
+	FilesRoot string `json:"files_root"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -79,9 +81,9 @@ func (s *Store) CreateProject(ctx context.Context, p Project) (Project, error) {
 	if p.RepoRef == "" {
 		p.RepoRef = "main"
 	}
-	err := s.db.QueryRow(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING created_at`,
-		p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount).Scan(&p.CreatedAt)
+	err := s.db.QueryRow(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount, files_root)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING created_at`,
+		p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount, p.FilesRoot).Scan(&p.CreatedAt)
 	return p, err
 }
 
@@ -91,8 +93,8 @@ func (s *Store) UpdateProject(ctx context.Context, p Project) (Project, error) {
 	if p.RepoRef == "" {
 		p.RepoRef = "main"
 	}
-	return scanProject(s.db.QueryRow(ctx, `UPDATE projects SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5
-		WHERE name = $1 RETURNING `+projectCols, p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image))
+	return scanProject(s.db.QueryRow(ctx, `UPDATE projects SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5, files_root = $6
+		WHERE name = $1 RETURNING `+projectCols, p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.FilesRoot))
 }
 
 // DeleteProject removes a project with all its sessions and their events.
@@ -104,11 +106,11 @@ func (s *Store) DeleteProject(ctx context.Context, name string) error {
 	return err
 }
 
-const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, created_at`
+const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, files_root, created_at`
 
 func scanProject(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.Name, &p.RepoURL, &p.RepoRef, &p.Subfolder, &p.Image, &p.RepoMount, &p.CreatedAt)
+	err := row.Scan(&p.Name, &p.RepoURL, &p.RepoRef, &p.Subfolder, &p.Image, &p.RepoMount, &p.FilesRoot, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, ErrNotFound
 	}

@@ -1,6 +1,7 @@
 // Thin client for Bob's API. Every call is same-origin; the session cookie does the auth.
 
-export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; created_at: string }
+export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; files_root: string; created_at: string }
+export interface FileEntry { name: string; type: 'file' | 'dir' | 'link' | 'other'; size: number }
 export interface Worker { name: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string }
 export interface WorkerList { sync: { ok: boolean; commit?: string; error?: string }; workers: Worker[]; error?: string }
 export interface Session {
@@ -46,7 +47,7 @@ export const api = {
   projects: () => call<{ projects: Project[] }>('GET', '/api/projects').then((r) => r.projects),
   createProject: (p: Partial<Project>) => call<Project>('POST', '/api/projects', p),
   project: (name: string) => call<Project>('GET', `/api/projects/${name}`),
-  updateProject: (name: string, p: Pick<Project, 'repo_url' | 'repo_ref' | 'subfolder' | 'image'>) => call<Project>('PATCH', `/api/projects/${name}`, p),
+  updateProject: (name: string, p: Pick<Project, 'repo_url' | 'repo_ref' | 'subfolder' | 'image' | 'files_root'>) => call<Project>('PATCH', `/api/projects/${name}`, p),
   deleteProject: (name: string) => call('DELETE', `/api/projects/${name}`),
   restartProject: (name: string) => call('POST', `/api/projects/${name}/restart`),
   workers: (project: string) => call<WorkerList>('GET', `/api/projects/${project}/workers`),
@@ -64,6 +65,13 @@ export const api = {
   deleteSchedule: (id: string) => call('DELETE', `/api/schedules/${id}`),
   runSchedule: (id: string) => call<ScheduleRun>('POST', `/api/schedules/${id}/run`),
   scheduleRuns: (id: string) => call<{ runs: ScheduleRun[] }>('GET', `/api/schedules/${id}/runs`).then((r) => r.runs),
+  /** A folder of the project's synced checkout; path is relative to the repository root. */
+  listFiles: (project: string, path: string) => call<{ entries: FileEntry[] }>('GET', `/api/projects/${project}/files/${encodePath(path)}`).then((r) => r.entries),
+  /** A link prefix under which the project's files load without the cookie, for sandboxed pages. */
+  viewLink: (project: string) => call<{ base: string }>('POST', `/api/projects/${project}/view`).then((r) => r.base),
   settings: () => call<{ schedules_paused: boolean }>('GET', '/api/settings'),
   updateSettings: (s: { schedules_paused: boolean }) => call<{ schedules_paused: boolean }>('PATCH', '/api/settings', s),
 }
+
+/** Encodes each segment of a slash-separated path. */
+export const encodePath = (path: string) => path.split('/').filter(Boolean).map(encodeURIComponent).join('/')

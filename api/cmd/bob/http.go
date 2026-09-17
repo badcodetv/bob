@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -233,9 +234,24 @@ func (a *app) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Name = r.PathValue("project")
+	body.FilesRoot = strings.Trim(body.FilesRoot, "/ ")
+	if !safeFilePath("/" + body.FilesRoot) {
+		http.Error(w, "files_root must be a folder inside the repository", http.StatusBadRequest)
+		return
+	}
+	before, err := a.store.Project(r.Context(), body.Name)
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
 	p, err := a.store.UpdateProject(r.Context(), body)
 	if err != nil {
 		reply(w, nil, err)
+		return
+	}
+	// Only settings the container is started with need a new container.
+	if p.RepoURL == before.RepoURL && p.RepoRef == before.RepoRef && p.Subfolder == before.Subfolder && p.Image == before.Image {
+		reply(w, p, nil)
 		return
 	}
 	reply(w, p, a.runtime.Recreate(r.Context(), p.Name))

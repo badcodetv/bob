@@ -72,6 +72,11 @@ viewed through a **viewer link**: `POST /api/projects/<p>/view` returns a base l
 names the project and you, grants reading that project's files only, and is checked against the
 project map on every request. `scripts/check-file-viewer.mjs` is the browser check.
 
+In the web app, **Files** (sidebar) browses the checkout and shows a file in a sandboxed frame,
+opening on the project's **Files folder** setting (e.g. `site`) and its `index.html` when there is
+one. **Refresh** pulls from git and reloads the page; **Open in new tab** opens the file on its
+own, still sandboxed. Changing the Files folder does not restart the project's container.
+
 ## Schedules
 
 A schedule starts a **new chat** on a worker with a fixed first message whenever its cron
@@ -119,7 +124,7 @@ deleting schedules, and settings. Everything else: anyone who may use that proje
 | --- | --- |
 | `GET /api/config` · `POST /api/login` · `POST /api/logout` | Google sign-in, and who is signed in (`email`, `admin`); everything else needs the session cookie |
 | `GET/POST /api/projects` | list (only the projects you may use), create |
-| `GET/PATCH /api/projects/{p}` | read; change `{repo_url, repo_ref, subfolder, image}` (recreates the container, keeps the volume) |
+| `GET/PATCH /api/projects/{p}` | read; change `{repo_url, repo_ref, subfolder, image, files_root}` (the first four recreate the container, keeping the volume) |
 | `DELETE /api/projects/{p}` | remove its container **and volume**, its chats and their events |
 | `POST /api/projects/{p}/restart` | recreate the container, keep the volume |
 | `GET /api/projects/{p}/workers` | workers read from git, and the last git sync |

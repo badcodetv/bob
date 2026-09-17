@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, type Project } from './api'
 
-type Editable = Pick<Project, 'repo_url' | 'repo_ref' | 'subfolder' | 'image'>
+type Editable = Pick<Project, 'repo_url' | 'repo_ref' | 'subfolder' | 'image' | 'files_root'>
 
 export function ProjectSettings({ name, open, onOpenChange, onSaved, onDeleted, onError }: {
   name: string
@@ -23,7 +23,7 @@ export function ProjectSettings({ name, open, onOpenChange, onSaved, onDeleted, 
     if (!open) return
     setConfirmName('')
     api.project(name).then((p) => {
-      const editable = { repo_url: p.repo_url, repo_ref: p.repo_ref, subfolder: p.subfolder, image: p.image }
+      const editable = { repo_url: p.repo_url, repo_ref: p.repo_ref, subfolder: p.subfolder, image: p.image, files_root: p.files_root }
       setForm(editable)
       setOriginal(editable)
     }).catch(onError)
@@ -67,6 +67,7 @@ export function ProjectSettings({ name, open, onOpenChange, onSaved, onDeleted, 
             {field('repo_ref', 'Branch', 'main')}
             {field('subfolder', 'Subfolder', 'e.g. bob', 'Where workers/ and skills/ live. Empty = the repository root.')}
             {field('image', 'Image', 'bob-runtime:dev', 'Empty = the default runtime image.')}
+            {field('files_root', 'Files folder', 'e.g. site', 'Where the Files page opens; it shows index.html there if there is one. Empty = the repository root.')}
           </div>
         )}
 

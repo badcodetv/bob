@@ -3,12 +3,13 @@ import { api, Unauthorized, type Config, type Project, type Session, type Worker
 import { Chat, NewChat } from './Chat'
 import { Overview } from './Overview'
 import { Schedules } from './Schedules'
+import { Files } from './Files'
 import { Sidebar } from './Sidebar'
 import { DrawerContext } from './ui'
 import { cn } from '@/lib/utils'
 
 // Routes are the URL hash: #/ · #/p/<project> (its overview) · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
-// · #/p/<project>/schedules
+// · #/p/<project>/schedules · #/p/<project>/files (its files folder) · #/p/<project>/files/<path> ('' = the repository root)
 function useHash() {
   const [hash, setHash] = useState(window.location.hash.slice(1) || '/')
   useEffect(() => {
@@ -30,17 +31,18 @@ export default function App() {
 }
 
 /** Which of a project's pages is open. */
-export type Page = 'overview' | 'schedules' | 'chat'
+export type Page = 'overview' | 'schedules' | 'files' | 'chat'
 
 /** What the sidebar says the project is doing right now. */
 export type Activity = '' | 'starting' | 'syncing'
 
 function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; onSignedOut: () => void }) {
   const hash = useHash()
-  const [, , project, mode, id] = hash.split('/')
+  const [, , project, mode, id, ...rest] = hash.split('/')
   const session = mode === 's' ? id : undefined
   const newWorker = mode === 'new' ? id : undefined
-  const page: Page = session || newWorker ? 'chat' : mode === 'schedules' ? 'schedules' : 'overview'
+  const page: Page = session || newWorker ? 'chat' : mode === 'schedules' ? 'schedules' : mode === 'files' ? 'files' : 'overview'
+  const filePath = mode === 'files' && id !== undefined ? [id, ...rest].map(decodeURIComponent).filter(Boolean).join('/') : undefined
   const [drawer, setDrawer] = useState(false)
   useEffect(() => { setDrawer(false) }, [hash])
 
@@ -104,6 +106,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
                 loadSessions()
                 window.location.hash = `/p/${project}/s/${s.id}`
               }} />
+            : project && page === 'files' ? <Files key={project} project={project} path={filePath} workers={workers} activity={activity} syncedAt={syncedAt} onSync={sync} onError={guard} />
             : project && page === 'schedules' ? <Schedules key={project} project={project} admin={admin} workers={workers} onRan={loadSessions} onError={guard} />
             : project ? <Overview key={project} name={project} admin={admin} workers={workers} sessions={sessions} activity={activity}
                 syncedAt={syncedAt} onSync={sync} onError={guard}
