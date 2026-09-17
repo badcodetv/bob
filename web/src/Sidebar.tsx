@@ -10,8 +10,9 @@ import { ago, engineName, Menu, MenuItem, MenuSeparator, when, WorkerBadge } fro
 
 const SHOWN_CHATS = 5
 
-export function Sidebar({ email, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, onOverview, onSync, onError, onProjectCreated, onSignOut }: {
+export function Sidebar({ email, admin, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, onOverview, onSync, onError, onProjectCreated, onSignOut }: {
   email: string
+  admin: boolean
   projects: Project[]
   project?: string
   workers: WorkerList | null
@@ -49,8 +50,8 @@ export function Sidebar({ email, projects, project, workers, sessions, activity,
           {projects.map((p) => (
             <MenuItem key={p.name} checked={p.name === project} onClick={() => { window.location.hash = `/p/${p.name}` }}>{p.name}</MenuItem>
           ))}
-          {projects.length > 0 && <MenuSeparator />}
-          <MenuItem checked={false} onClick={() => setCreating(true)}>New project…</MenuItem>
+          {admin && projects.length > 0 && <MenuSeparator />}
+          {admin && <MenuItem checked={false} onClick={() => setCreating(true)}>New project…</MenuItem>}
         </Menu>
         {project && <SyncStatus workers={workers} activity={activity} syncedAt={syncedAt} onSync={onSync} />}
       </div>

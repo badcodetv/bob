@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/engines"
@@ -21,35 +22,57 @@ import (
 )
 
 type app struct {
-	auth    *auth.Auth
-	webDir  string
-	store   *store.Store
-	broker  *broker.Broker
-	runtime *runtime.Manager
+	auth   *auth.Auth
+	access access.Map
+	// projectOf resolves the project a scoped route's session belongs to ("" if none).
+	projectOf func(ctx context.Context, kind, id string) string
+	webDir    string
+	store     *store.Store
+	broker    *broker.Broker
+	runtime   *runtime.Manager
 
 	mu    sync.Mutex
 	turns map[string]context.CancelFunc // session id → running turn
 }
 
-func (a *app) routes() http.Handler {
+// policy is who may call a route. Routes naming a project, session or schedule are scoped to
+// that project: someone who may not use it gets 404, so project names don't leak.
+type policy int
+
+const (
+	signedIn policy = iota // anyone signed in
+	member                 // may use the project: chat, view files, run schedules
+	admin                  // "*" in the project map: create, change and delete projects and schedules
+)
+
+func (a *app) routes() http.Handler { return a.mux(nil) }
+
+// mux builds the router. Tests pass stub to replace every handler and check only the guards.
+func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	api := http.NewServeMux()
-	api.HandleFunc("GET /api/projects", a.listProjects)
-	api.HandleFunc("POST /api/projects", a.createProject)
-	api.HandleFunc("GET /api/projects/{project}", a.getProject)
-	api.HandleFunc("PATCH /api/projects/{project}", a.updateProject)
-	api.HandleFunc("DELETE /api/projects/{project}", a.deleteProject)
-	api.HandleFunc("POST /api/projects/{project}/restart", a.restartProject)
-	api.HandleFunc("POST /api/projects/{project}/sync", a.syncProject)
-	api.HandleFunc("GET /api/projects/{project}/workers", a.listWorkers)
-	api.HandleFunc("GET /api/projects/{project}/sessions", a.listSessions)
-	api.HandleFunc("POST /api/projects/{project}/sessions", a.createSession)
-	api.HandleFunc("GET /api/sessions/{id}", a.getSession)
-	api.HandleFunc("PATCH /api/sessions/{id}", a.updateSession)
-	api.HandleFunc("DELETE /api/sessions/{id}", a.deleteSession)
-	api.HandleFunc("GET /api/sessions/{id}/events", a.listEvents)
-	api.HandleFunc("GET /api/sessions/{id}/stream", a.streamEvents)
-	api.HandleFunc("POST /api/sessions/{id}/messages", a.sendMessage)
-	api.HandleFunc("POST /api/sessions/{id}/interrupt", a.interrupt)
+	handle := func(pattern string, p policy, h http.HandlerFunc) {
+		if stub != nil {
+			h = stub
+		}
+		api.Handle(pattern, a.guard(p, h))
+	}
+	handle("GET /api/projects", signedIn, a.listProjects)
+	handle("POST /api/projects", admin, a.createProject)
+	handle("GET /api/projects/{project}", member, a.getProject)
+	handle("PATCH /api/projects/{project}", admin, a.updateProject)
+	handle("DELETE /api/projects/{project}", admin, a.deleteProject)
+	handle("POST /api/projects/{project}/restart", admin, a.restartProject)
+	handle("POST /api/projects/{project}/sync", member, a.syncProject)
+	handle("GET /api/projects/{project}/workers", member, a.listWorkers)
+	handle("GET /api/projects/{project}/sessions", member, a.listSessions)
+	handle("POST /api/projects/{project}/sessions", member, a.createSession)
+	handle("GET /api/sessions/{session}", member, a.getSession)
+	handle("PATCH /api/sessions/{session}", member, a.updateSession)
+	handle("DELETE /api/sessions/{session}", member, a.deleteSession)
+	handle("GET /api/sessions/{session}/events", member, a.listEvents)
+	handle("GET /api/sessions/{session}/stream", member, a.streamEvents)
+	handle("POST /api/sessions/{session}/messages", member, a.sendMessage)
+	handle("POST /api/sessions/{session}/interrupt", member, a.interrupt)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", a.config)
@@ -62,9 +85,48 @@ func (a *app) routes() http.Handler {
 	return mux
 }
 
+// guard enforces a route's policy against the project map.
+func (a *app) guard(p policy, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		email := a.auth.Email(r)
+		if p == signedIn {
+			next.ServeHTTP(w, r)
+			return
+		}
+		project, scoped := r.PathValue("project"), true
+		switch {
+		case project != "":
+		case r.PathValue("session") != "":
+			project = a.projectOf(r.Context(), "session", r.PathValue("session"))
+		default:
+			scoped = false
+		}
+		if scoped && (project == "" || !a.access.Member(email, project)) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if p == admin && !a.access.Admin(email) {
+			http.Error(w, "only an admin can do this", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sessionProject is the project a session belongs to, or "" when there is no such session.
+func (a *app) sessionProject(ctx context.Context, kind, id string) string {
+	if kind == "session" {
+		if s, err := a.store.Session(ctx, id); err == nil {
+			return s.Project
+		}
+	}
+	return ""
+}
+
 // config tells the web app how to sign in, and who is signed in.
 func (a *app) config(w http.ResponseWriter, r *http.Request) {
-	reply(w, map[string]string{"google_client_id": a.auth.ClientID, "email": a.auth.Email(r)}, nil)
+	email := a.auth.Email(r)
+	reply(w, map[string]any{"google_client_id": a.auth.ClientID, "email": email, "admin": email != "" && a.access.Admin(email)}, nil)
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +172,13 @@ func spa(dir string) http.Handler {
 
 func (a *app) listProjects(w http.ResponseWriter, r *http.Request) {
 	ps, err := a.store.Projects(r.Context())
-	reply(w, map[string]any{"projects": ps}, err)
+	email, visible := a.auth.Email(r), []store.Project{}
+	for _, p := range ps {
+		if a.access.Member(email, p.Name) {
+			visible = append(visible, p)
+		}
+	}
+	reply(w, map[string]any{"projects": visible}, err)
 }
 
 func (a *app) createProject(w http.ResponseWriter, r *http.Request) {
@@ -224,7 +292,7 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) getSession(w http.ResponseWriter, r *http.Request) {
-	s, err := a.store.Session(r.Context(), r.PathValue("id"))
+	s, err := a.store.Session(r.Context(), r.PathValue("session"))
 	reply(w, s, err)
 }
 
@@ -233,7 +301,7 @@ func (a *app) updateSession(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) || !validSettings(w, body.Model, body.Effort) {
 		return
 	}
-	s, err := a.store.SetSessionSettings(r.Context(), r.PathValue("id"), body.Model, body.Effort)
+	s, err := a.store.SetSessionSettings(r.Context(), r.PathValue("session"), body.Model, body.Effort)
 	reply(w, s, err)
 }
 
@@ -241,7 +309,7 @@ func (a *app) updateSession(w http.ResponseWriter, r *http.Request) {
 // container, then deletes the session and its events. A worktree that cannot be removed
 // (container gone, say) does not keep the session alive.
 func (a *app) deleteSession(w http.ResponseWriter, r *http.Request) {
-	sess, err := a.store.Session(r.Context(), r.PathValue("id"))
+	sess, err := a.store.Session(r.Context(), r.PathValue("session"))
 	if err != nil {
 		reply(w, nil, err)
 		return
@@ -273,14 +341,14 @@ func validSettings(w http.ResponseWriter, model, effort string) bool {
 
 func (a *app) listEvents(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	es, err := a.store.Events(r.Context(), r.PathValue("id"), after)
+	es, err := a.store.Events(r.Context(), r.PathValue("session"), after)
 	reply(w, map[string]any{"events": es}, err)
 }
 
 // streamEvents is SSE: stored events after ?after= (or Last-Event-ID), then live ones.
 // Stored events carry their id; ephemeral ones (token deltas) carry none.
 func (a *app) streamEvents(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := r.PathValue("session")
 	if _, err := a.store.Session(r.Context(), id); err != nil {
 		reply(w, nil, err)
 		return
@@ -343,7 +411,7 @@ func (a *app) sendMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "text is required", http.StatusBadRequest)
 		return
 	}
-	sess, err := a.store.Session(r.Context(), r.PathValue("id"))
+	sess, err := a.store.Session(r.Context(), r.PathValue("session"))
 	if err != nil {
 		reply(w, nil, err)
 		return
@@ -374,7 +442,7 @@ func (a *app) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) interrupt(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
-	cancel, ok := a.turns[r.PathValue("id")]
+	cancel, ok := a.turns[r.PathValue("session")]
 	a.mu.Unlock()
 	if ok {
 		cancel()

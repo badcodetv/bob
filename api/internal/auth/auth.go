@@ -23,7 +23,7 @@ const sessionTTL = 7 * 24 * time.Hour
 type Auth struct {
 	ClientID string
 	Secret   []byte
-	Allowed  map[string]bool // lower-case emails allowed to sign in
+	Allowed  func(email string) bool // may this lower-case email sign in?
 	// TokenInfoURL is Google's ID-token check; overridable in tests.
 	TokenInfoURL string
 }
@@ -57,7 +57,7 @@ func (a *Auth) VerifyGoogle(ctx context.Context, idToken string) (string, error)
 		return "", errors.New("sign-in token was issued for a different app")
 	case info.EmailVerified != "true":
 		return "", errors.New("google account email is not verified")
-	case !a.Allowed[email]:
+	case !a.Allowed(email):
 		return "", fmt.Errorf("%s is not allowed to use this Bob", email)
 	}
 	return email, nil
@@ -86,7 +86,7 @@ func (a *Auth) Email(r *http.Request) string {
 	}
 	email, exp, found := strings.Cut(payload, "|")
 	expiry, err := strconv.ParseInt(exp, 10, 64)
-	if !found || err != nil || time.Now().Unix() > expiry || !a.Allowed[email] {
+	if !found || err != nil || time.Now().Unix() > expiry || !a.Allowed(email) {
 		return ""
 	}
 	return email

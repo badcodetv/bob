@@ -31,7 +31,7 @@ scripts/dev-api                       # API on :8090
 (cd web && npm ci && npm run dev)     # UI on http://localhost:8080 (proxies /api)
 ```
 
-Sign in with Google (accounts in `BOB_ALLOWED_EMAILS`), create a project pointing at a git
+Sign in with Google (an account in `BOB_PROJECT_MAP`), create a project pointing at a git
 repository and subfolder, and pick a worker to start a chat. Push a change to the repository and
 press **Sync git** to pick it up — no restart. This repository's own `examples/config` works as a
 first project: `https://github.com/badcodetv/bob`, branch `main`, subfolder `examples/config`.
@@ -49,12 +49,31 @@ it — deleting removes the container, the volume and every chat. `POST /api/pro
 recreates a project's container (keeping its volume, and so
 every session) — needed after changing the project's own settings or passed-in credentials.
 
+## Who can use what
+
+`BOB_PROJECT_MAP` (or a file named by `BOB_PROJECT_MAP_FILE`; the inline one wins) lists who may
+sign in and which projects each person uses:
+
+```json
+{"kai@example.com": ["*"], "tester@example.com": ["wolf"]}
+```
+
+`"*"` is an **admin**: every project, and creating, changing and deleting projects (and schedules).
+Anyone else sees only their listed projects; they can chat, view files and run schedules there,
+and every other project's routes answer 404, as if it did not exist. Bob refuses to start on a map
+that is not valid JSON, lists nobody, or has a non-string entry. The old `BOB_ALLOWED_EMAILS`
+still works when no map is set, making each email an admin, and logs that it is deprecated.
+`scripts/import-agent-bob-env` copies the users of agent-bob's `AGENTKIT_PROJECT_MAP`.
+
 ## API
+
+Admin only: creating projects, `PATCH`/`DELETE` a project, restart. Everything else: anyone who
+may use that project.
 
 | | |
 | --- | --- |
-| `GET /api/config` · `POST /api/login` · `POST /api/logout` | Google sign-in; everything else needs the session cookie |
-| `GET/POST /api/projects` | list, create |
+| `GET /api/config` · `POST /api/login` · `POST /api/logout` | Google sign-in, and who is signed in (`email`, `admin`); everything else needs the session cookie |
+| `GET/POST /api/projects` | list (only the projects you may use), create |
 | `GET/PATCH /api/projects/{p}` | read; change `{repo_url, repo_ref, subfolder, image}` (recreates the container, keeps the volume) |
 | `DELETE /api/projects/{p}` | remove its container **and volume**, its chats and their events |
 | `POST /api/projects/{p}/restart` | recreate the container, keep the volume |

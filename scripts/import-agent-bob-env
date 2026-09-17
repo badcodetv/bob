@@ -5,7 +5,7 @@
 
 Values are never printed. Re-running overwrites the imported keys and keeps anything else
 you have added to .env by hand. Keys agent-bob needed and Bob does not (snapshots, registry,
-blob backend, mock-model settings, the project map) are left behind on purpose.
+blob backend, mock-model settings, the project map's connections) are left behind on purpose.
 """
 import json
 import os
@@ -75,13 +75,14 @@ for old, new in RENAMES.items():
 for key, value in DEFAULTS.items():
     merged.setdefault(key, value)
 
-# Who may sign in: the users agent-bob's project map already allowed.
-if "BOB_ALLOWED_EMAILS" not in merged and src.get("AGENTKIT_PROJECT_MAP"):
+# Who may sign in and which projects they use: agent-bob's project map, users only.
+if src.get("AGENTKIT_PROJECT_MAP"):
     try:
         users = json.loads(src["AGENTKIT_PROJECT_MAP"]).get("users", {})
         if users:
-            merged["BOB_ALLOWED_EMAILS"] = ",".join(sorted(users))
-            imported.append("BOB_ALLOWED_EMAILS")
+            merged["BOB_PROJECT_MAP"] = json.dumps(users, separators=(",", ":"))
+            merged.pop("BOB_ALLOWED_EMAILS", None)  # deprecated; the map replaces it
+            imported.append("BOB_PROJECT_MAP")
     except ValueError:
         missing.append("AGENTKIT_PROJECT_MAP (not valid JSON)")
 

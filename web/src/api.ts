@@ -11,6 +11,9 @@ export interface Session {
 export interface Settings { model: string; effort: string }
 export interface BobEvent { id: number; session_id: string; engine: string; kind: string; payload: any; created_at: string }
 
+/** Who is signed in; admin ("*" in the project map) may create, change and delete projects. */
+export type Config = { google_client_id: string; email: string; admin: boolean }
+
 export class Unauthorized extends Error {}
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -25,7 +28,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
-  config: () => call<{ google_client_id: string; email: string }>('GET', '/api/config'),
+  config: () => call<Config>('GET', '/api/config'),
   login: (credential: string) => call<{ email: string }>('POST', '/api/login', { credential }),
   logout: () => call('POST', '/api/logout'),
   projects: () => call<{ projects: Project[] }>('GET', '/api/projects').then((r) => r.projects),

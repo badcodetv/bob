@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, Unauthorized, type Project, type Session, type Worker, type WorkerList } from './api'
+import { api, Unauthorized, type Config, type Project, type Session, type Worker, type WorkerList } from './api'
 import { Chat, NewChat } from './Chat'
 import { Overview } from './Overview'
 import { Sidebar } from './Sidebar'
@@ -18,18 +18,19 @@ function useHash() {
 }
 
 export default function App() {
-  const [config, setConfig] = useState<{ google_client_id: string; email: string } | null>(null)
-  useEffect(() => { api.config().then(setConfig) }, [])
+  const [config, setConfig] = useState<Config | null>(null)
+  const load = useCallback(() => { api.config().then(setConfig) }, [])
+  useEffect(load, [load])
   if (!config) return null
-  if (!config.email) return <SignIn clientId={config.google_client_id} onSignedIn={(email) => setConfig({ ...config, email })} />
+  if (!config.email) return <SignIn clientId={config.google_client_id} onSignedIn={load} />
 
-  return <Signed email={config.email} onSignedOut={() => setConfig({ ...config, email: '' })} />
+  return <Signed email={config.email} admin={config.admin} onSignedOut={() => setConfig({ ...config, email: '', admin: false })} />
 }
 
 /** What the sidebar says the project is doing right now. */
 export type Activity = '' | 'starting' | 'syncing'
 
-function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void }) {
+function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; onSignedOut: () => void }) {
   const hash = useHash()
   const [, , project, mode, id] = hash.split('/')
   const session = mode === 's' ? id : undefined
@@ -80,7 +81,7 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
           'fixed inset-y-0 left-0 z-40 w-[min(300px,86vw)] -translate-x-full transition-transform duration-200 md:static md:z-auto md:w-68 md:translate-x-0 md:transition-none',
           drawer && 'translate-x-0',
         )}>
-          <Sidebar email={email} projects={projects} project={project} workers={workers} sessions={sessions}
+          <Sidebar email={email} admin={admin} projects={projects} project={project} workers={workers} sessions={sessions}
             activity={activity} syncedAt={syncedAt} currentSession={session} currentWorker={newWorker}
             onOverview={!session && !newWorker} onSync={sync} onError={guard}
             onProjectCreated={(name) => { loadProjects(); window.location.hash = `/p/${name}` }}
@@ -97,7 +98,7 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
                 loadSessions()
                 window.location.hash = `/p/${project}/s/${s.id}`
               }} />
-            : project ? <Overview key={project} name={project} workers={workers} sessions={sessions} activity={activity}
+            : project ? <Overview key={project} name={project} admin={admin} workers={workers} sessions={sessions} activity={activity}
                 syncedAt={syncedAt} onSync={sync} onError={guard}
                 onDeleted={() => { loadProjects(); window.location.hash = '/' }} />
             : <Home projects={projects} />}
@@ -115,7 +116,7 @@ function Home({ projects }: { projects: Project[] }) {
         <p className="text-muted-foreground">
           {projects.length
             ? 'Choose one from the menu at the top of the sidebar, or open one here.'
-            : 'There are no projects yet. Create one from the menu at the top of the sidebar.'}
+            : 'There are no projects you can open yet.'}
         </p>
         <ul className="flex flex-col">
           {projects.map((p) => (
@@ -144,7 +145,7 @@ declare global {
   interface Window { google?: any }
 }
 
-function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: (email: string) => void }) {
+function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: () => void }) {
   const [error, setError] = useState('')
   useEffect(() => {
     const script = document.createElement('script')
@@ -153,7 +154,7 @@ function SignIn({ clientId, onSignedIn }: { clientId: string; onSignedIn: (email
       window.google.accounts.id.initialize({
         client_id: clientId,
         callback: (r: { credential: string }) =>
-          api.login(r.credential).then((x) => onSignedIn(x.email)).catch((e) => setError(e.message)),
+          api.login(r.credential).then(() => onSignedIn()).catch((e) => setError(e.message)),
       })
       window.google.accounts.id.renderButton(document.getElementById('google-button'), { theme: 'outline', size: 'large' })
     }

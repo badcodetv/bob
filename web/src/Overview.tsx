@@ -10,8 +10,9 @@ import { ago, engineName, PageBar, prettyModel, when, WorkerBadge } from './ui'
 const RECENT = 5
 
 /** A project's home: what it is, what's been happening in it, and who works in it. */
-export function Overview({ name, workers, sessions, activity, syncedAt, onSync, onError, onDeleted }: {
+export function Overview({ name, admin, workers, sessions, activity, syncedAt, onSync, onError, onDeleted }: {
   name: string
+  admin: boolean
   workers: WorkerList | null
   sessions: Session[]
   activity: Activity
@@ -44,7 +45,7 @@ export function Overview({ name, workers, sessions, activity, syncedAt, onSync, 
           <RefreshCwIcon className={cn(activity && 'animate-spin')} />
           {activity === 'syncing' ? 'Pulling…' : 'Sync from git'}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>
+        {admin && <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>}
       </PageBar>
       <ProjectSettings name={name} open={settingsOpen} onOpenChange={setSettingsOpen} onError={onError}
         onSaved={() => { load(); onSync() }} onDeleted={onDeleted} />
@@ -133,7 +134,7 @@ export function Overview({ name, workers, sessions, activity, syncedAt, onSync, 
                   )}
               </Section>
 
-              <Section title="Setup" action={<button type="button" onClick={() => setSettingsOpen(true)} className="text-muted-foreground hover:text-foreground text-[13px] underline underline-offset-2">Edit</button>}>
+              <Section title="Setup" action={admin && <button type="button" onClick={() => setSettingsOpen(true)} className="text-muted-foreground hover:text-foreground text-[13px] underline underline-offset-2">Edit</button>}>
                 <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2.5 px-1 pt-1.5 text-[13.5px]">
                   <SetupRow label="Repository">
                     {folderLink ? <a href={folderLink} target="_blank" rel="noreferrer" className="decoration-border hover:decoration-foreground underline underline-offset-2">{repo}</a> : repo}

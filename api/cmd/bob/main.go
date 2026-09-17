@@ -7,7 +7,10 @@
 //	BOB_DOCKER_NETWORK run project containers on this network (set when Bob itself is containerised)
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
 //	BOB_SESSION_SECRET signs session cookies (required)
-//	BOB_ALLOWED_EMAILS comma-separated Google accounts allowed to sign in (required)
+//	BOB_PROJECT_MAP    who may sign in and which projects they use (required), JSON:
+//	                   {"kai@example.com": ["*"], "tester@example.com": ["wolf"]}; "*" = admin
+//	BOB_PROJECT_MAP_FILE the same map read from a file (BOB_PROJECT_MAP wins)
+//	BOB_ALLOWED_EMAILS deprecated: comma-separated emails, each an admin, when no map is set
 //	BOB_WEB_DIR        serve the built web app from here (optional; dev uses Vite)
 //	BOB_PASS_ENV       comma-separated variables copied into project containers,
 //	                   e.g. CLAUDE_CODE_OAUTH_TOKEN,ANTHROPIC_API_KEY,GITHUB_TOKEN
@@ -23,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/docker"
@@ -44,15 +48,16 @@ func main() {
 	}
 	defer st.Close()
 
-	allowed := map[string]bool{}
-	for _, e := range strings.Split(os.Getenv("BOB_ALLOWED_EMAILS"), ",") {
-		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
-			allowed[e] = true
-		}
+	people, deprecated, err := access.Load(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
 	}
-	signIn := &auth.Auth{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), Secret: []byte(os.Getenv("BOB_SESSION_SECRET")), Allowed: allowed}
-	if signIn.ClientID == "" || len(signIn.Secret) < 16 || len(allowed) == 0 {
-		log.Fatal("GOOGLE_CLIENT_ID, BOB_SESSION_SECRET (16+ chars) and BOB_ALLOWED_EMAILS are required")
+	if deprecated {
+		log.Print("BOB_ALLOWED_EMAILS is deprecated: every listed email is an admin. Set BOB_PROJECT_MAP instead.")
+	}
+	signIn := &auth.Auth{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), Secret: []byte(os.Getenv("BOB_SESSION_SECRET")), Allowed: people.Allowed}
+	if signIn.ClientID == "" || len(signIn.Secret) < 16 {
+		log.Fatal("GOOGLE_CLIENT_ID and BOB_SESSION_SECRET (16+ chars) are required")
 	}
 
 	pass := map[string]string{}
@@ -65,6 +70,7 @@ func main() {
 	}
 	app := &app{
 		auth:   signIn,
+		access: people,
 		webDir: os.Getenv("BOB_WEB_DIR"),
 		store:  st,
 		broker: broker.New(),
@@ -75,6 +81,7 @@ func main() {
 		}),
 		turns: map[string]context.CancelFunc{},
 	}
+	app.projectOf = app.sessionProject
 
 	srv := &http.Server{Addr: env("BOB_ADDR", ":8090"), Handler: app.routes()}
 	go func() {
