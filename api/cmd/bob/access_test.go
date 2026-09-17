@@ -25,7 +25,7 @@ func TestRouteAccess(t *testing.T) {
 
 	cookie := func(email string) *http.Cookie {
 		rec := httptest.NewRecorder()
-		a.auth.SetSession(rec, email)
+		a.auth.SetSession(rec, auth.User{Email: email})
 		return rec.Result().Cookies()[0]
 	}
 	const (

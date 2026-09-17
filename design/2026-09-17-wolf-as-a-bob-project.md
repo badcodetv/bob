@@ -707,7 +707,7 @@ changes and can be built and tested offline.
 ### Bob
 
 - [x] **A1** Per-project access via `BOB_PROJECT_MAP` (§A1).
-- [ ] **A2** Signed-in email/name into each turn's environment and git author (§A2).
+- [x] **A2** Signed-in email/name into each turn's environment and git author (§A2).
 - [ ] **A3** Git push credentials in the container + README push convention (§A3).
 - [ ] **A4a** Schedules table, due-computation, run loop with no-overlap and catch-up (§A4).
 - [ ] **A4b** Schedules API, manual run, post-run sync, `keep_sessions` pruning.
