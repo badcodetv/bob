@@ -66,6 +66,10 @@ HTML in a repo folder, and agents able to push their work.
 
 ## 2. Decisions this plan takes (each can be overturned; say so before Part B starts)
 
+**Kai accepted all of P1–P9 on 2026-09-17** (the build of Part B started that day), including
+the three flagged ones: P3 decisions in chat, P4 detection rather than prevention, P8/P9 derived
+metrics and report templates dropped.
+
 | # | Decision | Why | Alternative |
 | --- | --- | --- | --- |
 | P1 | **Wolf's scripts are TypeScript run on Node**, ported file-by-file from old Wolf with their tests. | `bob-runtime` already has Node 22. The rules in old Wolf's `spec.ts`, `evaluate.ts`, `guard.ts`, `normalise.ts`, `yahoo.ts` and `fred.ts` are subtle and heavily tested; porting beats re-deriving. No project image is needed for the core. | Python (pandas/matplotlib). Needs a project image and a rewrite of every rule. |
@@ -776,6 +780,11 @@ If Wolf opens to people Kai doesn't control, or the check fires for real:
    person approves on GitHub (users then need GitHub accounts).
 
 ## Part G — Open questions for Kai
+
+**Answered by Kai, 2026-09-17:** (1) migrate old Wolf's hypotheses if there are several worth
+keeping, otherwise start fresh (decided at W12, after counting them); (2) `badcodetv/wolf`,
+private; (3) daily run at 06:00 UTC; (4) any member of the `wolf` project may decide — no
+`deciders` list.
 
 1. **Old Wolf's live hypotheses on `wolf.box.badcode.tv`.** Migrate them (a one-off script reading
    old Bob's trusted `hypothesis-spec`/`hypothesis` memories and datasets into repo folders, keeping
