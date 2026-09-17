@@ -709,8 +709,8 @@ changes and can be built and tested offline.
 - [x] **A1** Per-project access via `BOB_PROJECT_MAP` (§A1).
 - [x] **A2** Signed-in email/name into each turn's environment and git author (§A2).
 - [ ] **A3** Git push credentials in the container + README push convention (§A3).
-- [ ] **A4a** Schedules table, due-computation, run loop with no-overlap and catch-up (§A4).
-- [ ] **A4b** Schedules API, manual run, post-run sync, `keep_sessions` pruning.
+- [x] **A4a** Schedules table, due-computation, run loop with no-overlap and catch-up (§A4).
+- [x] **A4b** Schedules API, manual run, post-run sync, `keep_sessions` pruning.
 - [ ] **A4c** Schedules page in the web app.
 - [ ] **A5a** Runtime `GET /files/…` with path safety tests.
 - [ ] **A5b** API proxy with the fixed CSP header and access checks.

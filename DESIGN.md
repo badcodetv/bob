@@ -39,7 +39,8 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
    Conversations, secrets, schedules and memory live in Postgres. Git never holds a secret or a
    conversation.
 6. **Harnesses mix within a project.** Each worker names its engine.
-7. **A schedule invokes a worker.** Workers have no schedules of their own.
+7. **A schedule invokes a worker.** Workers have no schedules of their own. A schedule starts a
+   new chat each time it fires, never two at once, and one switch pauses them all.
 8. **No model proxy, no mock model.** Credentials are passed into the project container. This is
    an internal tool: every run, scheduled ones included, uses Kai's subscription logins, with Kai
    present. An API-key path exists (`ANTHROPIC_API_KEY`) but is not the default.

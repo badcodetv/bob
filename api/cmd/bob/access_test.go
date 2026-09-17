@@ -18,7 +18,7 @@ func TestRouteAccess(t *testing.T) {
 		auth:   &auth.Auth{Secret: []byte("0123456789abcdef"), Allowed: people.Allowed},
 		access: people,
 		projectOf: func(_ context.Context, kind, id string) string {
-			return map[string]string{"session:wolf-chat": "wolf", "session:enc-chat": "enc"}[kind+":"+id]
+			return map[string]string{"session:wolf-chat": "wolf", "session:enc-chat": "enc", "schedule:wolf-daily": "wolf", "schedule:enc-daily": "enc"}[kind+":"+id]
 		},
 	}
 	h := a.mux(func(w http.ResponseWriter, r *http.Request) {})
@@ -76,6 +76,23 @@ func TestRouteAccess(t *testing.T) {
 		{tester, "POST", "/api/sessions/wolf-chat/messages", 200},
 		{tester, "POST", "/api/sessions/enc-chat/messages", 404},
 		{tester, "POST", "/api/sessions/enc-chat/interrupt", 404},
+
+		{tester, "GET", "/api/projects/wolf/schedules", 200},
+		{tester, "GET", "/api/projects/enc/schedules", 404},
+		{tester, "POST", "/api/projects/wolf/schedules", 403},
+		{admin, "POST", "/api/projects/wolf/schedules", 200},
+		{tester, "PATCH", "/api/schedules/wolf-daily", 403},
+		{tester, "PATCH", "/api/schedules/enc-daily", 404},
+		{admin, "PATCH", "/api/schedules/enc-daily", 200},
+		{tester, "DELETE", "/api/schedules/wolf-daily", 403},
+		{admin, "DELETE", "/api/schedules/no-such", 404},
+		{tester, "POST", "/api/schedules/wolf-daily/run", 200},
+		{tester, "POST", "/api/schedules/enc-daily/run", 404},
+		{tester, "GET", "/api/schedules/wolf-daily/runs", 200},
+		{tester, "GET", "/api/schedules/enc-daily/runs", 404},
+		{tester, "GET", "/api/settings", 200},
+		{tester, "PATCH", "/api/settings", 403},
+		{admin, "PATCH", "/api/settings", 200},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, c.path, nil)

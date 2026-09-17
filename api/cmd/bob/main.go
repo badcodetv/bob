@@ -80,8 +80,10 @@ func main() {
 			PassEnv:      pass,
 		}),
 		turns: map[string]context.CancelFunc{},
+		now:   time.Now,
 	}
-	app.projectOf = app.sessionProject
+	app.projectOf = app.storeProjectOf
+	go app.scheduleLoop(ctx)
 
 	srv := &http.Server{Addr: env("BOB_ADDR", ":8090"), Handler: app.routes()}
 	go func() {

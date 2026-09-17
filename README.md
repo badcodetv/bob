@@ -54,6 +54,24 @@ it — deleting removes the container, the volume and every chat. `POST /api/pro
 recreates a project's container (keeping its volume, and so
 every session) — needed after changing the project's own settings or passed-in credentials.
 
+## Schedules
+
+A schedule starts a **new chat** on a worker with a fixed first message whenever its cron
+expression fires (5 fields, in the schedule's timezone, e.g. `0 6 * * 1-5` in `Europe/London`).
+Each run, in order: pull the project's git (a failed pull fails the run — it never runs
+yesterday's prompt), check the worker exists, start the chat as `schedule:<id>`, wait for the
+turn, then pull git again so anything the run pushed shows up. Every run is recorded with its
+status (`running`, `ok`, `failed`, `skipped`) and its chat.
+
+- **No overlap:** if the previous run is still going, the firing is recorded as skipped.
+- **Missed firings** (Bob was down) run once if the latest was under 6 hours ago; older ones are
+  recorded as skipped. When a local time happens twice as clocks go back, it fires once.
+- **Old chats:** only the newest `keep_sessions` (default 30) of a schedule's chats are kept.
+- **Pause everything:** `PATCH /api/settings {"schedules_paused": true}` (admin) stops every
+  schedule firing; firings missed while paused follow the missed-firing rule on resume.
+  **Run now** still works while paused or disabled, because a person asked for it.
+- A run that was going when Bob stopped is marked failed when Bob starts again.
+
 ## Who can use what
 
 `BOB_PROJECT_MAP` (or a file named by `BOB_PROJECT_MAP_FILE`; the inline one wins) lists who may
@@ -72,8 +90,8 @@ still works when no map is set, making each email an admin, and logs that it is 
 
 ## API
 
-Admin only: creating projects, `PATCH`/`DELETE` a project, restart. Everything else: anyone who
-may use that project.
+Admin only: creating projects, `PATCH`/`DELETE` a project, restart, creating, changing and
+deleting schedules, and settings. Everything else: anyone who may use that project.
 
 | | |
 | --- | --- |
@@ -92,6 +110,12 @@ may use that project.
 | `POST /api/sessions/{id}/interrupt` | stop the running turn |
 | `GET /api/sessions/{id}/events?after=` | stored events |
 | `GET /api/sessions/{id}/stream` | SSE: stored events, then live ones (token deltas are live-only) |
+| `GET /api/projects/{p}/schedules` | schedules, each with `next_at` and `last_run`; and whether all are `paused` |
+| `POST /api/projects/{p}/schedules` | `{name, worker, cron, timezone?, message, enabled?, keep_sessions?}` |
+| `PATCH /api/schedules/{id}` · `DELETE /api/schedules/{id}` | change any of those fields; delete (its chats stay) |
+| `POST /api/schedules/{id}/run` | run now → 202 with the run (`skipped` if one is still going) |
+| `GET /api/schedules/{id}/runs` | the last 50 runs, newest first |
+| `GET/PATCH /api/settings` | `{schedules_paused}` — the switch that pauses every schedule |
 
 Events are stored exactly as the harness emitted them, with `engine` and `kind` beside the
 payload. Bob's own events are `bob.user_message`, `bob.turn_done` and `bob.turn_failed`.
@@ -100,6 +124,8 @@ payload. Bob's own events are `bob.user_message`, `bob.turn_done` and `bob.turn_
 
 ```sh
 (cd api && go vet ./... && go test ./...)
+# schedule tests need a Postgres where the user can create databases; each test makes its own:
+(cd api && BOB_TEST_DATABASE_URL=postgres://bob:bob@127.0.0.1:5433/bob go test ./cmd/bob)
 (cd runtime && npx tsc -p . && npm test)
 (cd web && npx tsc -b && npx vite build)
 ```
