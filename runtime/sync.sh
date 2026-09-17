@@ -22,6 +22,9 @@ out=$(
   fi 2>&1
 )
 if [ $? -eq 0 ]; then
+  # Commits made in session worktrees need an author; sessions can override it.
+  git -C "$P/repo" config user.name "Bob"
+  git -C "$P/repo" config user.email "bob@badcode.tv"
   commit=$(git -C "$P/repo" log -1 --format='%h %s' | sed 's/\\/\\\\/g; s/"/\\"/g')
   printf '{"ok":true,"commit":"%s"}\n' "$commit" > "$status"
 else

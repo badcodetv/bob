@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 
@@ -40,6 +41,8 @@ func (a *app) routes() http.Handler {
 	api.HandleFunc("GET /api/projects/{project}/sessions", a.listSessions)
 	api.HandleFunc("POST /api/projects/{project}/sessions", a.createSession)
 	api.HandleFunc("GET /api/sessions/{id}", a.getSession)
+	api.HandleFunc("PATCH /api/sessions/{id}", a.updateSession)
+	api.HandleFunc("DELETE /api/sessions/{id}", a.deleteSession)
 	api.HandleFunc("GET /api/sessions/{id}/events", a.listEvents)
 	api.HandleFunc("GET /api/sessions/{id}/stream", a.streamEvents)
 	api.HandleFunc("POST /api/sessions/{id}/messages", a.sendMessage)
@@ -153,8 +156,8 @@ func (a *app) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
-	var body struct{ Worker string }
-	if !decode(w, r, &body) {
+	var body struct{ Worker, Model, Effort string }
+	if !decode(w, r, &body) || !validSettings(w, body.Model, body.Effort) {
 		return
 	}
 	project := r.PathValue("project")
@@ -165,7 +168,7 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, wk := range list.Workers {
 		if wk.Name == body.Worker {
-			s, err := a.store.CreateSession(r.Context(), project, wk.Name, wk.Engine)
+			s, err := a.store.CreateSession(r.Context(), project, wk.Name, wk.Engine, body.Model, body.Effort)
 			reply(w, s, err)
 			return
 		}
@@ -176,6 +179,49 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 func (a *app) getSession(w http.ResponseWriter, r *http.Request) {
 	s, err := a.store.Session(r.Context(), r.PathValue("id"))
 	reply(w, s, err)
+}
+
+func (a *app) updateSession(w http.ResponseWriter, r *http.Request) {
+	var body struct{ Model, Effort string }
+	if !decode(w, r, &body) || !validSettings(w, body.Model, body.Effort) {
+		return
+	}
+	s, err := a.store.SetSessionSettings(r.Context(), r.PathValue("id"), body.Model, body.Effort)
+	reply(w, s, err)
+}
+
+// deleteSession stops any running turn, removes the session's worktree in its project
+// container, then deletes the session and its events. A worktree that cannot be removed
+// (container gone, say) does not keep the session alive.
+func (a *app) deleteSession(w http.ResponseWriter, r *http.Request) {
+	sess, err := a.store.Session(r.Context(), r.PathValue("id"))
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	a.endTurn(sess.ID)
+	if p, err := a.store.Project(r.Context(), sess.Project); err == nil {
+		if base, err := a.runtime.Ensure(r.Context(), p); err == nil {
+			if err := runtime.RemoveSession(r.Context(), base, sess.ID); err != nil {
+				log.Printf("session %s: removing worktree: %v", sess.ID, err)
+			}
+		}
+	}
+	reply(w, map[string]bool{"ok": true}, a.store.DeleteSession(r.Context(), sess.ID))
+}
+
+var modelName = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{0,100}$`)
+
+func validSettings(w http.ResponseWriter, model, effort string) bool {
+	switch {
+	case !modelName.MatchString(model):
+		http.Error(w, "model: letters, digits and . _ : / [ ] - only", http.StatusBadRequest)
+	case effort != "" && effort != "low" && effort != "medium" && effort != "high" && effort != "xhigh" && effort != "max":
+		http.Error(w, "effort must be low, medium, high, xhigh or max", http.StatusBadRequest)
+	default:
+		return true
+	}
+	return false
 }
 
 func (a *app) listEvents(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +362,7 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, text string) {
 		return
 	}
 	var done *runtime.TurnLine
-	err = runtime.RunTurn(ctx, base, runtime.TurnRequest{SessionID: sess.ID, Worker: sess.Worker, Text: text, Resume: sess.HarnessSessionID},
+	err = runtime.RunTurn(ctx, base, runtime.TurnRequest{SessionID: sess.ID, Worker: sess.Worker, Text: text, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort},
 		func(line runtime.TurnLine) error {
 			if line.Done {
 				done = &line

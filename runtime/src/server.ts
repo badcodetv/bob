@@ -3,16 +3,18 @@
 //   GET  /health
 //   GET  /workers                      the project's workers, read from git, plus the last sync
 //   POST /sync                         pull the project's git folder again
-//   POST /turns {session_id, worker, text, resume?}
+//   DELETE /sessions/<id>              remove a session's worktree and branch
+//   POST /turns {session_id, worker, text, resume?, model?, effort?}
 //        → application/x-ndjson: {"engine", "event"} per harness event, then
 //          {"done": true, "harness_session_id"} or {"done": true, "error"}
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { loadWorkers, type Worker } from './workers.js';
 import { runClaudeTurn } from './claude.js';
+import { prepareWorkdir, removeWorkdir } from './workdir.js';
 import type { Turn, TurnResult } from './turn.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -38,6 +40,11 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return sendJSON(res, 200, await workers());
   }
   if (req.method === 'POST' && req.url === '/turns') return turn(req, res);
+  const del = /^\/sessions\/([\w-]+)$/.exec(req.url ?? '');
+  if (req.method === 'DELETE' && del) {
+    await removeWorkdir(PROJECT_DIR, join(PROJECT_DIR, 'repo'), del[1]);
+    return sendJSON(res, 200, { ok: true });
+  }
   sendJSON(res, 404, { error: 'not found' });
 }
 
@@ -51,7 +58,7 @@ async function workers() {
 }
 
 async function turn(req: IncomingMessage, res: ServerResponse) {
-  const body = JSON.parse(await readBody(req)) as { session_id?: string; worker?: string; text?: string; resume?: string };
+  const body = JSON.parse(await readBody(req)) as { session_id?: string; worker?: string; text?: string; resume?: string; model?: string; effort?: string };
   if (!body.session_id || !/^[\w-]+$/.test(body.session_id) || !body.worker || !body.text) {
     return sendJSON(res, 400, { error: 'session_id, worker and text are required' });
   }
@@ -60,8 +67,7 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
   const driver = drivers[worker.engine];
   if (!driver) return sendJSON(res, 501, { error: `engine ${worker.engine} is not supported yet` });
 
-  const cwd = join(PROJECT_DIR, 'work', body.session_id);
-  await mkdir(cwd, { recursive: true });
+  const cwd = await prepareWorkdir(PROJECT_DIR, join(PROJECT_DIR, 'repo'), body.session_id);
 
   const abort = new AbortController();
   res.on('close', () => { if (!res.writableFinished) abort.abort(); });
@@ -69,7 +75,7 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
   const line = (v: unknown) => res.write(JSON.stringify(v) + '\n');
 
   try {
-    const result = await driver(worker, { sessionId: body.session_id, text: body.text, resume: body.resume, cwd },
+    const result = await driver(worker, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd },
       (event) => line({ engine: worker.engine, event }), abort.signal);
     line({ done: true, harness_session_id: result.harnessSessionId, error: result.error });
   } catch (err) {

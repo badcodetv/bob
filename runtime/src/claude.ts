@@ -15,8 +15,8 @@ export async function runClaudeTurn(worker: Worker, turn: Turn, emit: (event: un
     options: {
       cwd: turn.cwd,
       resume: turn.resume,
-      model: worker.model,
-      effort: worker.effort as EffortLevel | undefined,
+      model: turn.model || worker.model,
+      effort: (turn.effort || worker.effort) as EffortLevel | undefined,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: worker.prompt },
       allowedTools: worker.tools,
       permissionMode: 'bypassPermissions',

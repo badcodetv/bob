@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { api, Unauthorized, type Project, type Session, type WorkerList } from './api'
+import { api, Unauthorized, type Project, type Session, type Worker, type WorkerList } from './api'
 import { Chat, NewChat } from './Chat'
 
 // Routes are the URL hash: #/ · #/p/<project> · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
@@ -30,6 +30,9 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
   const session = mode === 's' ? id : undefined
   const newWorker = mode === 'new' ? id : undefined
   const [sessionsVersion, setSessionsVersion] = useState(0)
+  const [workers, setWorkers] = useState<WorkerList | null>(null)
+  useEffect(() => { setWorkers(null) }, [project])
+  const findWorker = (name?: string) => workers?.workers.find((w) => w.name === name)
   const guard = useCallback((err: unknown) => {
     if (err instanceof Unauthorized) onSignedOut()
     else alert(String((err as Error)?.message ?? err))
@@ -40,15 +43,18 @@ function Signed({ email, onSignedOut }: { email: string; onSignedOut: () => void
       <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r p-4 text-sm">
         <a href="#/" className="text-lg font-semibold">Bob</a>
         <Projects current={project} onError={guard} />
-        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} onError={guard} />}
+        {project && <ProjectPanel key={project} project={project} currentSession={session} currentWorker={newWorker} sessionsVersion={sessionsVersion} workers={workers} onWorkers={setWorkers} onError={guard} />}
         <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
           <span className="truncate">{email}</span>
           <Button variant="ghost" size="sm" onClick={() => api.logout().then(onSignedOut)}>Sign out</Button>
         </div>
       </aside>
       <main className="min-w-0 flex-1">
-        {session ? <SessionView id={session} onError={guard} />
-          : project && newWorker ? <NewChat key={newWorker} project={project} worker={newWorker} onCreated={(s) => {
+        {session ? <SessionView id={session} findWorker={findWorker} onError={guard} onDeleted={() => {
+              setSessionsVersion((v) => v + 1)
+              window.location.hash = `/p/${project}`
+            }} />
+          : project && newWorker ? <NewChat key={newWorker} project={project} worker={findWorker(newWorker)} onCreated={(s) => {
               setSessionsVersion((v) => v + 1)
               window.location.hash = `/p/${project}/s/${s.id}`
             }} />
@@ -107,10 +113,10 @@ function CreateProject({ onDone, onError }: { onDone: (name?: string) => void; o
   )
 }
 
-function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, onError }: {
-  project: string; currentSession?: string; currentWorker?: string; sessionsVersion: number; onError: (e: unknown) => void
+function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion, workers: list, onWorkers: setList, onError }: {
+  project: string; currentSession?: string; currentWorker?: string; sessionsVersion: number
+  workers: WorkerList | null; onWorkers: (l: WorkerList) => void; onError: (e: unknown) => void
 }) {
-  const [list, setList] = useState<WorkerList | null>(null)
   const [sessions, setSessions] = useState<Session[]>([])
   const [busy, setBusy] = useState('')
 
@@ -118,7 +124,7 @@ function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion,
   useEffect(() => {
     setBusy('Starting project…')
     api.workers(project).then(setList).catch(onError).finally(() => setBusy(''))
-  }, [project, onError])
+  }, [project, onError, setList])
   useEffect(() => { loadSessions() }, [loadSessions, sessionsVersion])
 
   const sync = () => {
@@ -151,7 +157,7 @@ function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion,
         {sessions.map((s) => (
           <a key={s.id} href={`#/p/${project}/s/${s.id}`}
             className={`rounded px-2 py-1 hover:bg-muted ${s.id === currentSession ? 'bg-muted font-medium' : ''}`}>
-            {s.worker} <span className="text-xs text-muted-foreground">{new Date(s.created_at).toLocaleString()}</span>
+            {s.worker}{s.model ? ` · ${s.model.replace('claude-', '')}` : ''} <span className="text-xs text-muted-foreground">{new Date(s.created_at).toLocaleString()}</span>
           </a>
         ))}
       </section>
@@ -159,10 +165,12 @@ function ProjectPanel({ project, currentSession, currentWorker, sessionsVersion,
   )
 }
 
-function SessionView({ id, onError }: { id: string; onError: (e: unknown) => void }) {
+function SessionView({ id, findWorker, onError, onDeleted }: {
+  id: string; findWorker: (name?: string) => Worker | undefined; onError: (e: unknown) => void; onDeleted: () => void
+}) {
   const [session, setSession] = useState<Session | null>(null)
   useEffect(() => { api.session(id).then(setSession).catch(onError) }, [id, onError])
-  return session ? <Chat key={session.id} session={session} /> : null
+  return session ? <Chat key={session.id} session={session} workerDefaults={findWorker(session.worker)} onDeleted={onDeleted} /> : null
 }
 
 declare global {

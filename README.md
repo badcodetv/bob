@@ -36,6 +36,10 @@ repository and subfolder, and pick a worker to start a chat. Push a change to th
 press **Sync git** to pick it up — no restart. This repository's own `examples/config` works as a
 first project: `https://github.com/badcodetv/bob`, branch `main`, subfolder `examples/config`.
 
+Each chat works in its own git worktree of the project's repository (`/project/work/<session>`,
+branch `bob/<session>`), so it can read and change the code without affecting other chats.
+Deleting the chat removes the worktree and the branch. Nothing is pushed.
+
 Private config repositories are cloned with `GITHUB_TOKEN`. For a local repository during
 development, create the project over the API with `"repo_url": "file:///seed"` and
 `"repo_mount": "/abs/path/to/repo"`.
@@ -52,8 +56,10 @@ every session) — needed after changing the project's own settings or passed-in
 | `POST /api/projects/{p}/restart` | recreate the container, keep the volume |
 | `GET /api/projects/{p}/workers` | workers read from git, and the last git sync |
 | `POST /api/projects/{p}/sync` | pull the config folder again, then list workers |
-| `GET/POST /api/projects/{p}/sessions` | list, create `{worker}` |
+| `GET/POST /api/projects/{p}/sessions` | list, create `{worker, model?, effort?}` |
 | `GET /api/sessions/{id}` | one session |
+| `PATCH /api/sessions/{id}` | `{model, effort}` for the next turn; empty = the worker's setting |
+| `DELETE /api/sessions/{id}` | stop it, remove its worktree and branch, delete it and its events |
 | `POST /api/sessions/{id}/messages` | `{text}` → 202; the turn runs in the background |
 | `POST /api/sessions/{id}/interrupt` | stop the running turn |
 | `GET /api/sessions/{id}/events?after=` | stored events |

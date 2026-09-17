@@ -182,6 +182,23 @@ type TurnRequest struct {
 	Worker    string `json:"worker"`
 	Text      string `json:"text"`
 	Resume    string `json:"resume,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+}
+
+// RemoveSession deletes a session's worktree and branch inside the project container.
+func RemoveSession(ctx context.Context, base, sessionID string) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/sessions/"+sessionID, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("runtime delete session: %s: %s", resp.Status, bytes.TrimSpace(msg))
+	}
+	return nil
 }
 
 // RunTurn posts a turn and calls onLine for every line until the runtime closes the stream.

@@ -109,28 +109,46 @@ func (s *Store) Projects(ctx context.Context) ([]Project, error) {
 }
 
 type Session struct {
-	ID               string    `json:"id"`
-	Project          string    `json:"project"`
-	Worker           string    `json:"worker"`
-	Engine           string    `json:"engine"`
-	HarnessSessionID string    `json:"harness_session_id"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID               string `json:"id"`
+	Project          string `json:"project"`
+	Worker           string `json:"worker"`
+	Engine           string `json:"engine"`
+	HarnessSessionID string `json:"harness_session_id"`
+	// Model and Effort override the worker's settings; empty means the worker's.
+	Model     string    `json:"model"`
+	Effort    string    `json:"effort"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-const sessionCols = `id, project, worker, engine, harness_session_id, created_at`
+const sessionCols = `id, project, worker, engine, harness_session_id, model, effort, created_at`
 
 func scanSession(row pgx.Row) (Session, error) {
 	var x Session
-	err := row.Scan(&x.ID, &x.Project, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.CreatedAt)
+	err := row.Scan(&x.ID, &x.Project, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return x, ErrNotFound
 	}
 	return x, err
 }
 
-func (s *Store) CreateSession(ctx context.Context, project, worker, engine string) (Session, error) {
-	return scanSession(s.db.QueryRow(ctx, `INSERT INTO sessions (project, worker, engine) VALUES ($1, $2, $3)
-		RETURNING `+sessionCols, project, worker, engine))
+func (s *Store) CreateSession(ctx context.Context, project, worker, engine, model, effort string) (Session, error) {
+	return scanSession(s.db.QueryRow(ctx, `INSERT INTO sessions (project, worker, engine, model, effort) VALUES ($1, $2, $3, $4, $5)
+		RETURNING `+sessionCols, project, worker, engine, model, effort))
+}
+
+// SetSessionSettings changes a session's model and effort for its next turn.
+func (s *Store) SetSessionSettings(ctx context.Context, id, model, effort string) (Session, error) {
+	return scanSession(s.db.QueryRow(ctx, `UPDATE sessions SET model = $2, effort = $3 WHERE id = $1
+		RETURNING `+sessionCols, id, model, effort))
+}
+
+// DeleteSession removes a session and all its events.
+func (s *Store) DeleteSession(ctx context.Context, id string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
 }
 
 func (s *Store) Session(ctx context.Context, id string) (Session, error) {

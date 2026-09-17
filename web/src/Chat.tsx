@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { AssistantRuntimeProvider, useExternalStoreRuntime, type ThreadMessageLike } from '@assistant-ui/react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Thread } from '@/components/assistant-ui/elements/thread.aui'
-import { api, type BobEvent, type Session } from './api'
+import { api, type BobEvent, type Session, type Settings, type Worker } from './api'
+import { ChatHeader } from './ChatHeader'
 import { claudeDelta, claudeMessages } from './engines/claude'
 
 // One converter per engine. An engine without one shows its events raw.
@@ -15,7 +16,8 @@ function toMessages(engine: string, events: BobEvent[], live: string): ThreadMes
   }))
 }
 
-export function Chat({ session }: { session: Session }) {
+export function Chat({ session: initial, workerDefaults, onDeleted }: { session: Session; workerDefaults?: Worker; onDeleted: () => void }) {
+  const [session, setSession] = useState(initial)
   const [events, setEvents] = useState<BobEvent[]>([])
   const [live, setLive] = useState('')
 
@@ -58,12 +60,22 @@ export function Chat({ session }: { session: Session }) {
     onCancel: async () => { await api.interrupt(session.id) },
   })
 
+  const change = (settings: Settings) =>
+    api.updateSession(session.id, settings).then(setSession).catch((e) => alert(e.message))
+  const remove = () => api.deleteSession(session.id).then(onDeleted).catch((e) => alert(e.message))
+
   return (
-    <TooltipProvider>
-      <AssistantRuntimeProvider runtime={runtime}>
-        <Thread />
-      </AssistantRuntimeProvider>
-    </TooltipProvider>
+    <div className="flex h-full flex-col">
+      <ChatHeader worker={session.worker} engine={session.engine} workerDefaults={workerDefaults}
+        settings={{ model: session.model, effort: session.effort }} onChange={change} onDelete={remove} />
+      <div className="min-h-0 flex-1">
+        <TooltipProvider>
+          <AssistantRuntimeProvider runtime={runtime}>
+            <Thread />
+          </AssistantRuntimeProvider>
+        </TooltipProvider>
+      </div>
+    </div>
   )
 }
 
@@ -71,8 +83,9 @@ export function Chat({ session }: { session: Session }) {
  * A chat that does not exist yet. Picking a worker opens this; the session is only created
  * when the first message is sent, so browsing workers leaves no empty chats behind.
  */
-export function NewChat({ project, worker, onCreated }: { project: string; worker: string; onCreated: (s: Session) => void }) {
+export function NewChat({ project, worker, onCreated }: { project: string; worker?: Worker; onCreated: (s: Session) => void }) {
   const [pending, setPending] = useState<string | null>(null)
+  const [settings, setSettings] = useState<Settings>({ model: '', effort: '' })
   const messages = useMemo<ThreadMessageLike[]>(
     () => (pending === null ? [] : [{ id: 'pending', role: 'user', content: [{ type: 'text', text: pending }] }]),
     [pending],
@@ -86,7 +99,8 @@ export function NewChat({ project, worker, onCreated }: { project: string; worke
       if (!text.trim()) return
       setPending(text)
       try {
-        const session = await api.createSession(project, worker)
+        if (!worker) throw new Error('this worker is not in the project any more')
+        const session = await api.createSession(project, worker.name, settings)
         await api.send(session.id, text)
         onCreated(session)
       } catch (err) {
@@ -96,10 +110,15 @@ export function NewChat({ project, worker, onCreated }: { project: string; worke
     },
   })
   return (
-    <TooltipProvider>
-      <AssistantRuntimeProvider runtime={runtime}>
-        <Thread />
-      </AssistantRuntimeProvider>
-    </TooltipProvider>
+    <div className="flex h-full flex-col">
+      {worker && <ChatHeader worker={worker.name} engine={worker.engine} workerDefaults={worker} settings={settings} onChange={setSettings} />}
+      <div className="min-h-0 flex-1">
+        <TooltipProvider>
+          <AssistantRuntimeProvider runtime={runtime}>
+            <Thread />
+          </AssistantRuntimeProvider>
+        </TooltipProvider>
+      </div>
+    </div>
   )
 }
