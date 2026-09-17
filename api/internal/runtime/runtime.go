@@ -5,11 +5,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -32,12 +36,35 @@ type Config struct {
 	// Secrets returns a project's own secrets, decrypted, when its container is created. They
 	// are added after PassEnv, so a project's secret replaces a passed variable of the same name.
 	Secrets func(ctx context.Context, project string) (map[string]string, error)
+	// TokenKey derives each project's runtime token (see Token). Required.
+	TokenKey []byte
+}
+
+// Token is the password a project's runtime server requires on every request, so an agent in
+// another project's container cannot drive this one over the Docker network. Bob passes it to the
+// container as BOB_RUNTIME_TOKEN and puts it in the base URL, from which Go's HTTP client sends it
+// as basic auth (and leaves it out of error messages).
+func Token(key []byte, project string) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("bob-runtime\x00" + project))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 type Manager struct {
 	docker *docker.Client
 	cfg    Config
 	mu     sync.Mutex // serialises container creation per Bob process
+	// destroyed names projects whose container and volume were removed: Ensure refuses them, so a
+	// request that was already on its way cannot bring the container back (with the project's
+	// secrets) after the project is deleted. Revive clears the mark for a re-created project.
+	destroyed map[string]bool
+}
+
+// Revive allows a container again for a project name that was destroyed and has been created anew.
+func (m *Manager) Revive(project string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.destroyed, project)
 }
 
 func NewManager(d *docker.Client, cfg Config) *Manager { return &Manager{docker: d, cfg: cfg} }
@@ -59,6 +86,9 @@ func VolumeName(project string) string { return "bob-project-" + project }
 func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.destroyed[p.Name] {
+		return "", fmt.Errorf("project %s has been deleted", p.Name)
+	}
 	name := ContainerName(p.Name)
 	st, err := m.docker.Inspect(ctx, name)
 	if errors.Is(err, docker.ErrNotFound) {
@@ -84,10 +114,11 @@ func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
 			return "", err
 		}
 	}
-	base := fmt.Sprintf("http://%s:%d", name, containerPort)
+	host := fmt.Sprintf("%s:%d", name, containerPort)
 	if m.cfg.Network == "" {
-		base = "http://127.0.0.1:" + st.LoopbackPort
+		host = "127.0.0.1:" + st.LoopbackPort
 	}
+	base := (&url.URL{Scheme: "http", User: url.UserPassword("bob", Token(m.cfg.TokenKey, p.Name)), Host: host}).String()
 	return base, waitHealthy(ctx, base)
 }
 
@@ -103,6 +134,10 @@ func (m *Manager) Recreate(ctx context.Context, project string) error {
 func (m *Manager) Destroy(ctx context.Context, project string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.destroyed == nil {
+		m.destroyed = map[string]bool{}
+	}
+	m.destroyed[project] = true
 	if err := m.docker.Remove(ctx, ContainerName(project)); err != nil {
 		return err
 	}
@@ -122,6 +157,7 @@ func (m *Manager) spec(p store.Project, secrets map[string]string) docker.Contai
 		vars[k] = v
 	}
 	vars["BOB_REPO_URL"], vars["BOB_REPO_REF"], vars["BOB_REPO_SUBFOLDER"] = p.RepoURL, p.RepoRef, p.Subfolder
+	vars["BOB_RUNTIME_TOKEN"] = Token(m.cfg.TokenKey, p.Name)
 	env := make([]string, 0, len(vars))
 	for k, v := range vars {
 		env = append(env, k+"="+v)

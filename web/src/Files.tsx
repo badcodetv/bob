@@ -27,7 +27,13 @@ export function Files({ project, path, workers, activity, syncedAt, onSync, onEr
   const [info, setInfo] = useState<Project | null>(null)
   const [base, setBase] = useState('')
   useEffect(() => { api.project(project).then(setInfo).catch(onError) }, [project, onError])
-  useEffect(() => { api.viewLink(project).then(setBase).catch(onError) }, [project, onError])
+  // Viewer links last 12 hours: get a fresh one on every git refresh and every 6 hours.
+  useEffect(() => {
+    const get = () => api.viewLink(project).then(setBase).catch(onError)
+    get()
+    const t = setInterval(get, 6 * 3600_000)
+    return () => clearInterval(t)
+  }, [project, onError, syncedAt])
 
   const root = info?.files_root ?? ''
   const current = path ?? root

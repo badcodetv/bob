@@ -59,15 +59,19 @@ func (a *app) tick(ctx context.Context) {
 			log.Printf("schedule %s/%s: %v", sch.Project, sch.Name, err)
 			continue
 		}
-		if last.IsZero() {
-			last = sch.CreatedAt
+		// Firings are counted from the latest of: the last cron firing, creation, and when it was
+		// last turned on or retimed — so turning a schedule back on never runs what it missed while off.
+		for _, t := range []time.Time{sch.CreatedAt, sch.ChangedAt} {
+			if t.After(last) {
+				last = t
+			}
 		}
 		due, ok := spec.Due(last, now)
 		if !ok {
 			continue
 		}
 		if now.Sub(due) > schedule.CatchUp {
-			detail := fmt.Sprintf("missed the firing at %s: Bob was not running within %v of it", due.UTC().Format(time.RFC3339), schedule.CatchUp)
+			detail := fmt.Sprintf("missed the firing at %s: more than %v ago (Bob was not running, or schedules were paused)", due.UTC().Format(time.RFC3339), schedule.CatchUp)
 			if _, err := a.store.SkipRun(ctx, sch.ID, "cron", detail, now); err != nil {
 				log.Printf("schedule %s/%s: %v", sch.Project, sch.Name, err)
 			}
@@ -97,6 +101,7 @@ func (a *app) fire(ctx context.Context, sch store.Schedule, trigger string) (sto
 // execute is one run: pull git, start a session on the worker with the schedule's message, wait
 // for the turn, pull git again so anything the run pushed is visible, then prune old sessions.
 func (a *app) execute(ctx context.Context, sch store.Schedule, run store.Run) {
+	defer a.hold(sch.Project)()
 	status, detail := "failed", ""
 	defer func() {
 		if err := a.store.FinishRun(ctx, run.ID, status, detail, a.now()); err != nil {
@@ -279,10 +284,14 @@ func (a *app) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, err)
 		return
 	}
+	before := x
 	body.apply(&x)
 	if err := validSchedule(x); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if (x.Enabled && !before.Enabled) || x.Cron != before.Cron || x.Timezone != before.Timezone {
+		x.ChangedAt = a.now()
 	}
 	x, err = a.store.UpdateSchedule(r.Context(), x)
 	reply(w, x, err)

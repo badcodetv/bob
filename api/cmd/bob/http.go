@@ -29,6 +29,8 @@ type containers interface {
 	Ensure(ctx context.Context, p store.Project) (string, error)
 	Recreate(ctx context.Context, project string) error
 	Destroy(ctx context.Context, project string) error
+	// Revive lets a project name that was destroyed have a container again (it was re-created).
+	Revive(project string)
 }
 
 type app struct {
@@ -46,6 +48,34 @@ type app struct {
 	mu        sync.Mutex
 	turns     map[string]context.CancelFunc // session id → running turn
 	scheduled sync.WaitGroup                // scheduled runs in progress
+	active    map[string]int                // project → turns, scheduled runs and syncs in progress
+	pending   map[string]bool               // project → recreate its container once it is idle (changed secrets)
+}
+
+// hold marks work in progress in a project, so a secrets change waits instead of restarting its
+// container underneath it. Call the returned func exactly once when the work ends.
+func (a *app) hold(project string) (release func()) {
+	a.mu.Lock()
+	if a.active == nil {
+		a.active = map[string]int{}
+	}
+	a.active[project]++
+	a.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.mu.Lock()
+			a.active[project]--
+			apply := a.active[project] == 0 && a.pending[project]
+			if a.active[project] == 0 {
+				delete(a.active, project)
+			}
+			a.mu.Unlock()
+			if apply {
+				a.applyWhenIdle(context.Background(), project)
+			}
+		})
+	}
 }
 
 // policy is who may call a route. Routes naming a project, session or schedule are scoped to
@@ -223,6 +253,9 @@ func (a *app) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := a.store.CreateProject(r.Context(), p)
+	if err == nil {
+		a.runtime.Revive(p.Name)
+	}
 	reply(w, p, err)
 }
 
@@ -278,10 +311,16 @@ func (a *app) deleteProject(w http.ResponseWriter, r *http.Request) {
 	for _, s := range sessions {
 		a.endTurn(s.ID)
 	}
+	// Destroy also stops any later Ensure for this name, so work already in flight (a scheduled run,
+	// a page loading files) cannot re-create the container between here and the row's deletion.
 	if err := a.runtime.Destroy(r.Context(), name); err != nil {
+		a.runtime.Revive(name)
 		reply(w, nil, fmt.Errorf("removing the project's container and volume: %w", err))
 		return
 	}
+	a.mu.Lock()
+	delete(a.pending, name)
+	a.mu.Unlock()
 	reply(w, map[string]bool{"ok": true}, a.store.DeleteProject(r.Context(), name))
 }
 
@@ -300,6 +339,7 @@ func (a *app) listWorkers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) syncProject(w http.ResponseWriter, r *http.Request) {
+	defer a.hold(r.PathValue("project"))()
 	list, err := a.workers(r.Context(), r.PathValue("project"), true)
 	reply(w, list, err)
 }
@@ -500,14 +540,21 @@ func (a *app) startTurn(ctx context.Context, sess store.Session, user auth.User,
 	}
 	a.turns[sess.ID] = cancel
 	a.mu.Unlock()
+	release := a.hold(sess.Project)
 
-	payload, _ := json.Marshal(map[string]string{"text": text})
+	// Who sent it is recorded here, by Bob: the authoritative record. The agent sees the same person
+	// in its environment, but anything inside the container (git authors included) can be altered.
+	payload, _ := json.Marshal(map[string]string{"text": text, "user_email": user.Email, "user_name": user.Name})
 	userEvent, err := a.record(ctx, store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.user_message", Payload: payload})
 	if err != nil {
 		a.endTurn(sess.ID)
+		release()
 		return store.Event{}, nil, err
 	}
-	return userEvent, func() error { return a.runTurn(turnCtx, sess, user, text) }, nil
+	return userEvent, func() error {
+		defer release()
+		return a.runTurn(turnCtx, sess, user, text)
+	}, nil
 }
 
 func (a *app) interrupt(w http.ResponseWriter, r *http.Request) {

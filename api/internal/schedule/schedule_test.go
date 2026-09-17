@@ -81,6 +81,21 @@ func TestDue(t *testing.T) {
 		t.Errorf("01:30 London fired twice on the autumn change: again at %s UTC", got.UTC().Format("15:04"))
 	}
 
+	// Every 15 minutes through the autumn change: each local time of the repeated hour fires once.
+	quarter, _ := Parse("*/15 * * * *", "Europe/London")
+	seen := map[string]int{}
+	for n := quarter.Next(at(t, "UTC", "2026-10-24 23:50")); n.Before(at(t, "UTC", "2026-10-25 02:00")); n = quarter.Next(n) {
+		seen[wall(n, quarter.loc)]++
+	}
+	for w, count := range seen {
+		if count != 1 {
+			t.Errorf("%s fired %d times", w, count)
+		}
+	}
+	if len(seen) != 4 { // 01:00, 01:15, 01:30, 01:45, each once (at their BST occurrence)
+		t.Errorf("firings through the repeated hour: %v", seen)
+	}
+
 	// A firing one hour apart in UTC on the day London's clocks go forward.
 	spec, _ := Parse("0 6 * * *", "Europe/London")
 	before := spec.Next(at(t, "UTC", "2026-03-28 00:00"))

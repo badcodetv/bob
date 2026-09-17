@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/badcodetv/bob/internal/access"
+	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/store"
 	"github.com/jackc/pgx/v5"
@@ -123,6 +125,7 @@ type fakeContainers struct{ base string }
 func (c fakeContainers) Ensure(context.Context, store.Project) (string, error) { return c.base, nil }
 func (c fakeContainers) Recreate(context.Context, string) error                { return nil }
 func (c fakeContainers) Destroy(context.Context, string) error                 { return nil }
+func (c fakeContainers) Revive(string)                                         {}
 
 type clock struct {
 	mu sync.Mutex
@@ -337,5 +340,39 @@ func TestScheduledSessionsAreNamed(t *testing.T) {
 	names := map[string]bool{list[0].Schedule: true, list[1].Schedule: true}
 	if !names["daily-research"] || !names[""] {
 		t.Errorf("schedule names on the list: %q, %q", list[0].Schedule, list[1].Schedule)
+	}
+}
+
+func TestTurningAScheduleBackOnDoesNotCatchUp(t *testing.T) {
+	a, _, c := newScheduleApp(t)
+	sch := create(t, a, store.Schedule{Name: "hourly-off", Cron: "0 * * * *"})
+	sch.Enabled = false
+	sch, _ = a.store.UpdateSchedule(t.Context(), sch)
+
+	// Off for three hours, turned back on through the API at +3h30: the 3:00 firing is not run.
+	c.set(sch.CreatedAt.Add(3*time.Hour + 30*time.Minute))
+	people := access.Map{"admin@example.com": {"*"}}
+	a.auth, a.access = &auth.Auth{Secret: []byte("0123456789abcdef"), Allowed: people.Allowed}, people
+	a.projectOf = a.storeProjectOf
+	rec := httptest.NewRecorder()
+	a.auth.SetSession(rec, auth.User{Email: "admin@example.com"})
+	req := httptest.NewRequest("PATCH", "/api/schedules/"+sch.ID, strings.NewReader(`{"enabled":true}`))
+	req.AddCookie(rec.Result().Cookies()[0])
+	res := httptest.NewRecorder()
+	a.routes().ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("enable: %d %s", res.Code, res.Body)
+	}
+	a.tick(t.Context())
+	a.scheduled.Wait()
+	if got := statuses(runs(t, a, sch)); got != "" {
+		t.Errorf("turned back on: %s, want nothing until the next firing", got)
+	}
+	// The next hour fires as usual.
+	c.set(sch.CreatedAt.Truncate(time.Hour).Add(4*time.Hour + time.Minute))
+	a.tick(t.Context())
+	a.scheduled.Wait()
+	if got := statuses(runs(t, a, sch)); got != "cron:ok" {
+		t.Errorf("next firing: %s", got)
 	}
 }

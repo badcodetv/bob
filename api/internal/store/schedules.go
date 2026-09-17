@@ -22,13 +22,15 @@ type Schedule struct {
 	// KeepSessions is how many of this schedule's sessions to keep; older ones are deleted.
 	KeepSessions int       `json:"keep_sessions"`
 	CreatedAt    time.Time `json:"created_at"`
+	// ChangedAt is when it was last turned on or had its cron or timezone changed.
+	ChangedAt time.Time `json:"changed_at"`
 }
 
-const scheduleCols = `id, project, name, worker, cron, timezone, message, enabled, keep_sessions, created_at`
+const scheduleCols = `id, project, name, worker, cron, timezone, message, enabled, keep_sessions, created_at, changed_at`
 
 func scanSchedule(row pgx.Row) (Schedule, error) {
 	var x Schedule
-	err := row.Scan(&x.ID, &x.Project, &x.Name, &x.Worker, &x.Cron, &x.Timezone, &x.Message, &x.Enabled, &x.KeepSessions, &x.CreatedAt)
+	err := row.Scan(&x.ID, &x.Project, &x.Name, &x.Worker, &x.Cron, &x.Timezone, &x.Message, &x.Enabled, &x.KeepSessions, &x.CreatedAt, &x.ChangedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -44,8 +46,8 @@ func (s *Store) CreateSchedule(ctx context.Context, x Schedule) (Schedule, error
 // UpdateSchedule saves every field but the id, project and creation time.
 func (s *Store) UpdateSchedule(ctx context.Context, x Schedule) (Schedule, error) {
 	return scanSchedule(s.db.QueryRow(ctx, `UPDATE schedules SET name = $2, worker = $3, cron = $4, timezone = $5, message = $6,
-		enabled = $7, keep_sessions = $8 WHERE id = $1 RETURNING `+scheduleCols,
-		x.ID, x.Name, x.Worker, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions))
+		enabled = $7, keep_sessions = $8, changed_at = $9 WHERE id = $1 RETURNING `+scheduleCols,
+		x.ID, x.Name, x.Worker, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions, x.ChangedAt))
 }
 
 func (s *Store) DeleteSchedule(ctx context.Context, id string) error {

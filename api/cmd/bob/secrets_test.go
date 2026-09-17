@@ -87,13 +87,27 @@ func TestSecrets(t *testing.T) {
 		t.Errorf("unknown project: %d", code)
 	}
 
-	// While a turn runs in the project, the change waits instead of cutting it off.
-	sess, _ := st.CreateSession(t.Context(), "wolf", "researcher", "claude", "", "")
-	a.turns[sess.ID] = func() {}
+	// While work runs in the project (a turn, a scheduled run, a sync), the change waits instead of
+	// cutting it off, shows as pending, and is applied the moment the last piece of work ends.
+	releaseTurn, releaseSync := a.hold("wolf"), a.hold("wolf")
 	if _, body := do("PUT", "/api/projects/wolf/secrets/OTHER", `{"value":"y"}`); !strings.Contains(body, `"applied":false`) || len(containers.recreated) != 1 {
 		t.Errorf("busy project: %s, recreated %v", body, containers.recreated)
 	}
-	delete(a.turns, sess.ID)
+	if _, body := do("GET", "/api/projects/wolf/secrets", ""); !strings.Contains(body, `"pending":true`) {
+		t.Errorf("pending not shown: %s", body)
+	}
+	releaseTurn()
+	releaseTurn() // releasing twice counts once
+	if len(containers.recreated) != 1 {
+		t.Errorf("recreated while a sync was still running: %v", containers.recreated)
+	}
+	releaseSync()
+	if len(containers.recreated) != 2 {
+		t.Errorf("not recreated once idle: %v", containers.recreated)
+	}
+	if _, body := do("GET", "/api/projects/wolf/secrets", ""); !strings.Contains(body, `"pending":false`) {
+		t.Errorf("still pending: %s", body)
+	}
 
 	if code, _ := do("DELETE", "/api/projects/wolf/secrets/FRED_API_KEY", ""); code != 200 {
 		t.Errorf("delete: %d", code)

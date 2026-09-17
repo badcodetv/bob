@@ -38,7 +38,10 @@ func (a *app) listSecrets(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []store.SecretInfo{}
 	}
-	reply(w, map[string]any{"secrets": list, "enabled": a.secrets != nil}, err)
+	a.mu.Lock()
+	pending := a.pending[r.PathValue("project")]
+	a.mu.Unlock()
+	reply(w, map[string]any{"secrets": list, "enabled": a.secrets != nil, "pending": pending}, err)
 }
 
 func (a *app) setSecret(w http.ResponseWriter, r *http.Request) {
@@ -85,29 +88,31 @@ func (a *app) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	a.applySecrets(w, r, project)
 }
 
-// applySecrets recreates the project's container so it starts with the changed secrets — unless a
-// turn is running there, which a restart would cut off. Then the change waits for a restart.
+// applySecrets recreates the project's container so it starts with the changed secrets — unless
+// work is in progress there (a turn, a scheduled run, a git sync), which a restart would cut off.
+// Then the change is pending, and applied as soon as that work ends.
 func (a *app) applySecrets(w http.ResponseWriter, r *http.Request, project string) {
-	busy, err := a.projectBusy(r.Context(), project)
-	if err != nil || busy {
-		reply(w, map[string]bool{"applied": false}, err)
-		return
+	a.mu.Lock()
+	if a.pending == nil {
+		a.pending = map[string]bool{}
 	}
-	reply(w, map[string]bool{"applied": true}, a.runtime.Recreate(r.Context(), project))
+	a.pending[project] = true
+	a.mu.Unlock()
+	applied, err := a.applyWhenIdle(r.Context(), project)
+	reply(w, map[string]bool{"applied": applied}, err)
 }
 
-// projectBusy reports whether any session of the project has a turn running.
-func (a *app) projectBusy(ctx context.Context, project string) (bool, error) {
-	sessions, err := a.store.Sessions(ctx, project)
-	if err != nil {
-		return false, err
-	}
+// applyWhenIdle recreates a project's container if a change is pending and nothing is running
+// there. The check and the recreate happen under one lock, so no turn can start in between.
+func (a *app) applyWhenIdle(ctx context.Context, project string) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, s := range sessions {
-		if _, ok := a.turns[s.ID]; ok {
-			return true, nil
-		}
+	if !a.pending[project] || a.active[project] > 0 {
+		return false, nil
 	}
-	return false, nil
+	if err := a.runtime.Recreate(ctx, project); err != nil {
+		return false, err
+	}
+	delete(a.pending, project)
+	return true, nil
 }

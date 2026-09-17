@@ -20,6 +20,7 @@ function checkout() {
   symlinkSync(p, join(repo, 'site', 'escape-dir'))
   symlinkSync(join(repo, '.git'), join(repo, 'site', 'git-link'))
   symlinkSync('index.html', join(repo, 'site', 'home.html'))
+  symlinkSync('charts', join(repo, 'site', 'latest'))
   return repo
 }
 
@@ -50,8 +51,10 @@ test('anything leaving the checkout, or into .git, is not found', async () => {
   }
 })
 
-test('a directory lists its entries without .git', async () => {
+test('a directory lists its entries without .git, symlinks as their targets, escaping symlinks not at all', async () => {
   const repo = checkout()
-  const { entries } = await listDir(repo)
+  const site = await listDir(repo, join(repo, 'site'))
+  assert.deepEqual(site.entries.map((e) => `${e.name}:${e.type}`), ['charts:dir', 'home.html:file', 'index.html:file', 'latest:dir'])
+  const { entries } = await listDir(repo, repo)
   assert.deepEqual(entries, [{ name: '..notes.md', type: 'file', size: 13 }, { name: 'data.bin', type: 'file', size: 1 }, { name: 'site', type: 'dir', size: 0 }])
 })

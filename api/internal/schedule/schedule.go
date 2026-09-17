@@ -41,8 +41,8 @@ func Parse(expr, timezone string) (Spec, error) {
 // twice, it fires at the first only.
 func (s Spec) Next(t time.Time) time.Time {
 	n := s.sched.Next(t.In(s.loc))
-	if !n.IsZero() && wall(n.Add(-time.Hour), s.loc) == wall(n, s.loc) {
-		return s.sched.Next(n)
+	for !n.IsZero() && wall(n.Add(-time.Hour), s.loc) == wall(n, s.loc) {
+		n = s.sched.Next(n)
 	}
 	return n
 }

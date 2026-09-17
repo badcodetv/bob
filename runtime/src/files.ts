@@ -39,14 +39,22 @@ export async function resolveRepoPath(repoDir: string, urlPath: string): Promise
   return { kind: 'file', path: real, size: st.size, type: contentType(real) }
 }
 
-export async function listDir(dir: string) {
+/**
+ * Lists dir (inside repoDir). A symlink is listed as what it points to when that stays inside the
+ * checkout, and left out when it does not, since it could not be opened anyway.
+ */
+export async function listDir(repoDir: string, dir: string) {
   const entries = []
+  const root = await realpath(repoDir)
   for (const name of (await readdir(dir)).sort()) {
-    if (name === '.git') continue
-    const st = await lstat(join(dir, name)).catch(() => null)
-    if (!st) continue
-    const type = st.isDirectory() ? 'dir' : st.isFile() ? 'file' : st.isSymbolicLink() ? 'link' : 'other'
-    entries.push({ name, type, size: st.isFile() ? st.size : 0 })
+    if (name.toLowerCase() === '.git') continue
+    let st = await lstat(join(dir, name)).catch(() => null)
+    if (st?.isSymbolicLink()) {
+      const target = await resolveRepoPath(root, relative(root, join(dir, name)).split(sep).map(encodeURIComponent).join('/'))
+      st = target ? await stat(target.path).catch(() => null) : null
+    }
+    if (!st || !(st.isDirectory() || st.isFile())) continue
+    entries.push({ name, type: st.isDirectory() ? 'dir' : 'file', size: st.isFile() ? st.size : 0 })
   }
   return { entries }
 }

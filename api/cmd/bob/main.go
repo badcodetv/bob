@@ -91,6 +91,7 @@ func main() {
 			DefaultImage: env("BOB_RUNTIME_IMAGE", "bob-runtime:dev"),
 			Network:      os.Getenv("BOB_DOCKER_NETWORK"),
 			PassEnv:      pass,
+			TokenKey:     signIn.Secret,
 		}),
 		turns: map[string]context.CancelFunc{},
 		now:   time.Now,

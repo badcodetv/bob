@@ -2,12 +2,25 @@
 # bob-push [ref] — publish this chat's commits to the project's branch.
 # Pulls with rebase then pushes HEAD to origin/<ref>; when another chat pushed first the push is
 # rejected, so it pulls again and retries, up to 3 attempts. A rebase conflict stops it with the
-# conflict left for the agent to resolve.
+# conflict left to resolve; after resolving (git add), running bob-push again finishes the rebase.
 set -u
 ref="${1:-${BOB_REPO_REF:-main}}"
+rebasing() { [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; }
+conflict() {
+  echo "bob-push: rebasing onto origin/$ref stopped on a conflict in: $(git diff --name-only --diff-filter=U | tr '\n' ' ')" >&2
+  echo "bob-push: fix those files, git add them, then run bob-push again (or git rebase --abort to give up)" >&2
+  exit 1
+}
+if rebasing; then
+  [ -z "$(git diff --name-only --diff-filter=U)" ] || conflict
+  GIT_EDITOR=true git rebase --continue >/dev/null || conflict
+fi
 n=1
 while :; do
-  git pull --quiet --rebase origin "$ref" || { echo "bob-push: rebase onto origin/$ref failed; resolve it, then run bob-push again" >&2; exit 1; }
+  if ! git pull --quiet --rebase origin "$ref"; then
+    rebasing && conflict
+    echo "bob-push: could not pull origin/$ref (see above)" >&2; exit 1
+  fi
   git push --quiet origin "HEAD:$ref" && { echo "bob-push: pushed $(git log -1 --format=%h) to $ref"; exit 0; }
   [ "$n" -ge 3 ] && { echo "bob-push: push to $ref rejected 3 times" >&2; exit 1; }
   n=$((n + 1))

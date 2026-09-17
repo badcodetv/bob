@@ -43,7 +43,9 @@ Deleting the chat removes the worktree and the branch. Nothing is pushed.
 A turn knows who it is for. Its tools see `BOB_USER_EMAIL` and `BOB_USER_NAME` (the signed-in
 person; a scheduled turn has `schedule:<schedule id>` and the schedule's name), and a commit made
 during the turn is authored by that person and committed by `Bob <bob@badcode.tv>`. These are set
-by Bob, not taken from the conversation, so the agent cannot be talked into another name.
+by Bob, not taken from the conversation. They are a courtesy, not proof: the agent's own tools can
+change environment variables and git authors. The record of who sent each message is Bob's
+`bob.user_message` event (`user_email`, `user_name`), written outside the container.
 
 Private config repositories are cloned with `GITHUB_TOKEN`. For a local repository during
 development, create the project over the API with `"repo_url": "file:///seed"` and

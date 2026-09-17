@@ -39,12 +39,19 @@ test('two chats push to the same branch: the second rebases and still lands', ()
   assert.equal(git(remote, 'log', '--format=%s', 'main'), 'write two.txt\nwrite one.txt\nseed')
 })
 
-test('a conflicting change stops bob-push with the conflict left to resolve', () => {
+test('a conflicting change stops bob-push; after resolving, bob-push finishes the rebase and lands', () => {
   const { remote, one, two } = remoteWithTwoChats()
   commit(one, 'a.txt', 'from one\n')
   commit(two, 'a.txt', 'from two\n')
   execFileSync('sh', [bobPush, 'main'], { cwd: one, env })
-  assert.throws(() => execFileSync('sh', [bobPush, 'main'], { cwd: two, env, stdio: 'pipe' }), /rebase onto origin\/main failed/)
-  assert.equal(git(remote, 'log', '-1', '--format=%s', 'main'), 'write a.txt')
+  assert.throws(() => execFileSync('sh', [bobPush, 'main'], { cwd: two, env, stdio: 'pipe' }), /conflict in: a.txt/)
   assert.equal(git(remote, 'show', 'main:a.txt'), 'from one')
+  assert.throws(() => execFileSync('sh', [bobPush, 'main'], { cwd: two, env, stdio: 'pipe' }), /conflict in: a.txt/, 'still unresolved')
+
+  writeFileSync(join(two, 'a.txt'), 'from both\n')
+  git(two, 'add', 'a.txt')
+  const out = execFileSync('sh', [bobPush, 'main'], { cwd: two, env, encoding: 'utf8' })
+  assert.match(out, /pushed .* to main/)
+  assert.equal(git(remote, 'show', 'main:a.txt'), 'from both')
+  assert.equal(git(remote, 'log', '--format=%s', 'main'), 'write a.txt\nwrite a.txt\nseed')
 })
