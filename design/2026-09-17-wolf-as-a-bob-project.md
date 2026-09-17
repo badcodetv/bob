@@ -255,6 +255,12 @@ any other host. Wolf's pages therefore use **static SVG charts and plain links o
 asserting the CSP header is present on HTML, SVG and JSON responses; a browser check that a
 committed page containing `<script>fetch('/api/projects')</script>` does not execute.
 
+**As built (2026-09-17), two changes found by the browser check:** (1) in a sandboxed document
+`'self'` matches nothing, so the policy names Bob's origin (from `X-Forwarded-Host`/`Host`) for
+`img-src`, `style-src` and `font-src`; (2) a sandboxed page's own subresource requests carry no
+cookie, so pages are viewed under a 12-hour signed viewer link, `/api/view/<token>/…`, that grants
+reading one project's files and is re-checked against the project map on every request.
+
 ### A6. Secrets for the Wolf project
 
 The Wolf project needs `FRED_API_KEY` and a pushing `GITHUB_TOKEN`.
@@ -713,7 +719,7 @@ changes and can be built and tested offline.
 - [x] **A4b** Schedules API, manual run, post-run sync, `keep_sessions` pruning.
 - [ ] **A4c** Schedules page in the web app.
 - [x] **A5a** Runtime `GET /files/…` with path safety tests.
-- [ ] **A5b** API proxy with the fixed CSP header and access checks.
+- [x] **A5b** API proxy with the fixed CSP header and access checks.
 - [ ] **A5c** Files page: browser, sandboxed viewer, `files_root`, Refresh.
 - [ ] **A6** Add `FRED_API_KEY` to the pass-through list for local and box config.
 

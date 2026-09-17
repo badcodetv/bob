@@ -218,6 +218,16 @@ func RemoveSession(ctx context.Context, base, sessionID string) error {
 	return nil
 }
 
+// File fetches /files<escapedPath> from the runtime: a file from the synced checkout, or a
+// directory listing. The caller closes the body and passes the status on.
+func File(ctx context.Context, base, escapedPath string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/files"+escapedPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	return http.DefaultClient.Do(req)
+}
+
 // RunTurn posts a turn and calls onLine for every line until the runtime closes the stream.
 func RunTurn(ctx context.Context, base string, t TurnRequest, onLine func(TurnLine) error) error {
 	body, _ := json.Marshal(t)

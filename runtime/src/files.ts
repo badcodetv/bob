@@ -3,7 +3,7 @@
 // .git folder — is reported as not found.
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
-import { extname, join, relative, sep } from 'node:path'
+import { extname, isAbsolute, join, relative, sep } from 'node:path'
 
 export type Resolved =
   | { kind: 'file'; path: string; size: number; type: string }
@@ -31,7 +31,7 @@ export async function resolveRepoPath(repoDir: string, urlPath: string): Promise
     return null
   }
   const rel = relative(root, real)
-  if (rel.startsWith('..') || rel.split(sep).some((s) => s === '..' || s.toLowerCase() === '.git')) return null
+  if (isAbsolute(rel) || rel.split(sep).some((s) => s === '..' || s.toLowerCase() === '.git')) return null
   const st = await stat(real).catch(() => null)
   if (!st) return null
   if (st.isDirectory()) return { kind: 'dir', path: real }

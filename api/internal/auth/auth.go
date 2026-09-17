@@ -96,7 +96,7 @@ func (a *Auth) User(r *http.Request) User {
 	}
 	// email|expiry|name — the name may itself contain "|"; cookies from before names have none.
 	parts := strings.SplitN(payload, "|", 3)
-	if len(parts) < 2 {
+	if len(parts) < 2 || !strings.Contains(parts[0], "@") {
 		return User{}
 	}
 	expiry, err := strconv.ParseInt(parts[1], 10, 64)
@@ -108,6 +108,33 @@ func (a *Auth) User(r *http.Request) User {
 		u.Name = parts[2]
 	}
 	return u
+}
+
+// Token signs payload for one purpose until ttl passes. Session cookies can never be read as
+// tokens, nor tokens as cookies: the signed text starts with the purpose and "|", which an email
+// address cannot contain.
+func (a *Auth) Token(purpose, payload string, ttl time.Duration) string {
+	if strings.Contains(purpose, "@") {
+		panic("auth: a token purpose cannot contain @")
+	}
+	return a.sign(purpose + "|" + strconv.FormatInt(time.Now().Add(ttl).Unix(), 10) + "|" + payload)
+}
+
+// CheckToken returns a token's payload if it was signed for purpose and has not expired.
+func (a *Auth) CheckToken(purpose, token string) (string, bool) {
+	signed, ok := a.verify(token)
+	if !ok {
+		return "", false
+	}
+	parts := strings.SplitN(signed, "|", 3)
+	if len(parts) != 3 || parts[0] != purpose || strings.Contains(purpose, "@") {
+		return "", false
+	}
+	expiry, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || time.Now().Unix() > expiry {
+		return "", false
+	}
+	return parts[2], true
 }
 
 func (a *Auth) sign(payload string) string {

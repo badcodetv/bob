@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionCookieRoundTrip(t *testing.T) {
@@ -52,5 +53,32 @@ func TestVerifyGoogle(t *testing.T) {
 		if _, err := a.VerifyGoogle(t.Context(), token); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want it to mention %q", token, err, want)
 		}
+	}
+}
+
+func TestTokens(t *testing.T) {
+	a := &Auth{Secret: []byte("s"), Allowed: func(string) bool { return true }}
+	tok := a.Token("view", "wolf|kai@example.com", time.Hour)
+	if got, ok := a.CheckToken("view", tok); !ok || got != "wolf|kai@example.com" {
+		t.Fatalf("CheckToken = %q, %v", got, ok)
+	}
+	if _, ok := a.CheckToken("other", tok); ok {
+		t.Error("a token was accepted for another purpose")
+	}
+	if _, ok := a.CheckToken("view", a.Token("view", "x", -time.Second)); ok {
+		t.Error("an expired token was accepted")
+	}
+	if _, ok := (&Auth{Secret: []byte("t")}).CheckToken("view", tok); ok {
+		t.Error("a token signed with another secret was accepted")
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: tok})
+	if u := a.User(req); u.Email != "" {
+		t.Errorf("a token was accepted as a session cookie: %+v", u)
+	}
+	rec := httptest.NewRecorder()
+	a.SetSession(rec, User{Email: "kai@example.com"})
+	if _, ok := a.CheckToken("kai@example.com", rec.Result().Cookies()[0].Value); ok {
+		t.Error("a session cookie was accepted as a token")
 	}
 }

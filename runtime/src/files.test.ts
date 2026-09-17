@@ -14,6 +14,7 @@ function checkout() {
   writeFileSync(join(repo, 'site', 'index.html'), '<h1>hi</h1>')
   writeFileSync(join(repo, 'site', 'charts', 'gold chart.svg'), '<svg/>')
   writeFileSync(join(repo, 'data.bin'), 'x')
+  writeFileSync(join(repo, '..notes.md'), 'dots are fine')
   writeFileSync(join(p, 'outside.txt'), 'secret')
   symlinkSync(join(p, 'outside.txt'), join(repo, 'site', 'escape.txt'))
   symlinkSync(p, join(repo, 'site', 'escape-dir'))
@@ -32,6 +33,7 @@ test('files inside the checkout resolve, with a content type', async () => {
   const bin = await resolveRepoPath(repo, 'data.bin')
   assert.equal(bin?.kind === 'file' && bin.type, 'application/octet-stream')
   assert.equal((await resolveRepoPath(repo, 'site/home.html'))?.kind, 'file', 'a symlink staying inside is fine')
+  assert.equal((await resolveRepoPath(repo, '..notes.md'))?.kind, 'file', 'a name merely starting with .. is fine')
   assert.equal((await resolveRepoPath(repo, ''))?.kind, 'dir')
   assert.equal((await resolveRepoPath(repo, 'site/'))?.kind, 'dir')
 })
@@ -51,5 +53,5 @@ test('anything leaving the checkout, or into .git, is not found', async () => {
 test('a directory lists its entries without .git', async () => {
   const repo = checkout()
   const { entries } = await listDir(repo)
-  assert.deepEqual(entries, [{ name: 'data.bin', type: 'file', size: 1 }, { name: 'site', type: 'dir', size: 0 }])
+  assert.deepEqual(entries, [{ name: '..notes.md', type: 'file', size: 13 }, { name: 'data.bin', type: 'file', size: 1 }, { name: 'site', type: 'dir', size: 0 }])
 })

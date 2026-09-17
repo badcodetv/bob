@@ -83,6 +83,9 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("GET /api/sessions/{session}/stream", member, a.streamEvents)
 	handle("POST /api/sessions/{session}/messages", member, a.sendMessage)
 	handle("POST /api/sessions/{session}/interrupt", member, a.interrupt)
+	handle("GET /api/projects/{project}/files", member, a.getFile)
+	handle("GET /api/projects/{project}/files/{path...}", member, a.getFile)
+	handle("POST /api/projects/{project}/view", member, a.viewLink)
 	handle("GET /api/projects/{project}/schedules", member, a.listSchedules)
 	handle("POST /api/projects/{project}/schedules", admin, a.createSchedule)
 	handle("PATCH /api/schedules/{schedule}", admin, a.updateSchedule)
@@ -96,6 +99,8 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	mux.HandleFunc("GET /api/config", a.config)
 	mux.HandleFunc("POST /api/login", a.login)
 	mux.HandleFunc("POST /api/logout", a.logout)
+	mux.HandleFunc("GET /api/view/{token}", a.viewFile)
+	mux.HandleFunc("GET /api/view/{token}/{path...}", a.viewFile)
 	mux.Handle("/api/", a.requireLogin(api))
 	if a.webDir != "" {
 		mux.Handle("/", spa(a.webDir))

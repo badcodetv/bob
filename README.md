@@ -54,6 +54,24 @@ it — deleting removes the container, the volume and every chat. `POST /api/pro
 recreates a project's container (keeping its volume, and so
 every session) — needed after changing the project's own settings or passed-in credentials.
 
+## Files
+
+`GET /api/projects/<p>/files/<path>` reads the project's **synced checkout** (what the last git
+sync fetched, not a chat's worktree): a file, or a directory as `{entries:[{name,type,size}]}`.
+Paths that leave the checkout — `..` plain or encoded, symlinks pointing out — and `.git` are 404.
+
+Agents write these files, and an agent can be talked into writing a hostile page, so every
+response carries a fixed policy: `Content-Security-Policy: sandbox; default-src 'none'` (plus
+images, styles and fonts from Bob itself), `nosniff`, `no-referrer`, `no-store`. The page runs no
+JavaScript and has no origin of its own, so it cannot use your sign-in, even opened directly in a
+tab. Pages therefore use static HTML, CSS, SVG and plain links.
+
+A sandboxed page's own images and stylesheets are requested without your cookie, so pages are
+viewed through a **viewer link**: `POST /api/projects/<p>/view` returns a base like
+`/api/view/<token>/`, under which the project's files load for 12 hours with no cookie. The token
+names the project and you, grants reading that project's files only, and is checked against the
+project map on every request. `scripts/check-file-viewer.mjs` is the browser check.
+
 ## Schedules
 
 A schedule starts a **new chat** on a worker with a fixed first message whenever its cron
@@ -110,6 +128,8 @@ deleting schedules, and settings. Everything else: anyone who may use that proje
 | `POST /api/sessions/{id}/interrupt` | stop the running turn |
 | `GET /api/sessions/{id}/events?after=` | stored events |
 | `GET /api/sessions/{id}/stream` | SSE: stored events, then live ones (token deltas are live-only) |
+| `GET /api/projects/{p}/files/{path}` | a file or directory listing from the synced checkout, sandboxed (see Files) |
+| `POST /api/projects/{p}/view` · `GET /api/view/{token}/{path}` | a 12-hour viewer link, and files read through it without the cookie |
 | `GET /api/projects/{p}/schedules` | schedules, each with `next_at` and `last_run`; and whether all are `paused` |
 | `POST /api/projects/{p}/schedules` | `{name, worker, cron, timezone?, message, enabled?, keep_sessions?}` |
 | `PATCH /api/schedules/{id}` · `DELETE /api/schedules/{id}` | change any of those fields; delete (its chats stay) |
