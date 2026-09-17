@@ -14,6 +14,11 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json entrypoint.sh sync.sh ./
+COPY bob-push /usr/local/bin/bob-push
+# Git reaches github.com with GITHUB_TOKEN from the environment, read at the moment git asks.
+# The token is never written to a file — not here, not on the project volume.
+RUN git config --system credential.https://github.com.helper \
+      '!f() { [ "$1" = get ] && [ -n "${GITHUB_TOKEN:-}" ] && printf "username=x-access-token\npassword=%s\n" "$GITHUB_TOKEN"; }; f'
 RUN mkdir -p /project && chown node:node /project
 ENV BOB_PROJECT_DIR=/project \
     CLAUDE_CONFIG_DIR=/project/.bob/claude \
