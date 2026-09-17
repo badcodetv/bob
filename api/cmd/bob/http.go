@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
@@ -21,18 +22,27 @@ import (
 	"github.com/badcodetv/bob/internal/store"
 )
 
+// containers starts and removes project containers (runtime.Manager; faked in tests).
+type containers interface {
+	Ensure(ctx context.Context, p store.Project) (string, error)
+	Recreate(ctx context.Context, project string) error
+	Destroy(ctx context.Context, project string) error
+}
+
 type app struct {
 	auth   *auth.Auth
 	access access.Map
-	// projectOf resolves the project a scoped route's session belongs to ("" if none).
+	// projectOf resolves the project a scoped route's session or schedule belongs to ("" if none).
 	projectOf func(ctx context.Context, kind, id string) string
 	webDir    string
 	store     *store.Store
 	broker    *broker.Broker
-	runtime   *runtime.Manager
+	runtime   containers
+	now       func() time.Time
 
-	mu    sync.Mutex
-	turns map[string]context.CancelFunc // session id → running turn
+	mu        sync.Mutex
+	turns     map[string]context.CancelFunc // session id → running turn
+	scheduled sync.WaitGroup                // scheduled runs in progress
 }
 
 // policy is who may call a route. Routes naming a project, session or schedule are scoped to
@@ -73,6 +83,14 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("GET /api/sessions/{session}/stream", member, a.streamEvents)
 	handle("POST /api/sessions/{session}/messages", member, a.sendMessage)
 	handle("POST /api/sessions/{session}/interrupt", member, a.interrupt)
+	handle("GET /api/projects/{project}/schedules", member, a.listSchedules)
+	handle("POST /api/projects/{project}/schedules", admin, a.createSchedule)
+	handle("PATCH /api/schedules/{schedule}", admin, a.updateSchedule)
+	handle("DELETE /api/schedules/{schedule}", admin, a.deleteSchedule)
+	handle("POST /api/schedules/{schedule}/run", member, a.runScheduleNow)
+	handle("GET /api/schedules/{schedule}/runs", member, a.listRuns)
+	handle("GET /api/settings", signedIn, a.getSettings)
+	handle("PATCH /api/settings", admin, a.updateSettings)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", a.config)
@@ -98,6 +116,8 @@ func (a *app) guard(p policy, next http.Handler) http.Handler {
 		case project != "":
 		case r.PathValue("session") != "":
 			project = a.projectOf(r.Context(), "session", r.PathValue("session"))
+		case r.PathValue("schedule") != "":
+			project = a.projectOf(r.Context(), "schedule", r.PathValue("schedule"))
 		default:
 			scoped = false
 		}
@@ -113,10 +133,15 @@ func (a *app) guard(p policy, next http.Handler) http.Handler {
 	})
 }
 
-// sessionProject is the project a session belongs to, or "" when there is no such session.
-func (a *app) sessionProject(ctx context.Context, kind, id string) string {
-	if kind == "session" {
+// storeProjectOf is the project a session or schedule belongs to, or "" when there is none.
+func (a *app) storeProjectOf(ctx context.Context, kind, id string) string {
+	switch kind {
+	case "session":
 		if s, err := a.store.Session(ctx, id); err == nil {
+			return s.Project
+		}
+	case "schedule":
+		if s, err := a.store.Schedule(ctx, id); err == nil {
 			return s.Project
 		}
 	}
@@ -314,15 +339,19 @@ func (a *app) deleteSession(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, err)
 		return
 	}
+	reply(w, map[string]bool{"ok": true}, a.removeSession(r.Context(), sess))
+}
+
+func (a *app) removeSession(ctx context.Context, sess store.Session) error {
 	a.endTurn(sess.ID)
-	if p, err := a.store.Project(r.Context(), sess.Project); err == nil {
-		if base, err := a.runtime.Ensure(r.Context(), p); err == nil {
-			if err := runtime.RemoveSession(r.Context(), base, sess.ID); err != nil {
+	if p, err := a.store.Project(ctx, sess.Project); err == nil {
+		if base, err := a.runtime.Ensure(ctx, p); err == nil {
+			if err := runtime.RemoveSession(ctx, base, sess.ID); err != nil {
 				log.Printf("session %s: removing worktree: %v", sess.ID, err)
 			}
 		}
 	}
-	reply(w, map[string]bool{"ok": true}, a.store.DeleteSession(r.Context(), sess.ID))
+	return a.store.DeleteSession(ctx, sess.ID)
 }
 
 var modelName = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{0,100}$`)
@@ -416,28 +445,43 @@ func (a *app) sendMessage(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, err)
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	userEvent, run, err := a.startTurn(r.Context(), sess, a.auth.User(r), body.Text)
+	if errors.Is(err, errBusy) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	go run()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	reply(w, userEvent, nil)
+}
+
+var errBusy = errors.New("a turn is already running in this session")
+
+// startTurn claims the session for a turn and records the user's message. The caller runs the
+// returned function, now or in the background, to execute the turn; it returns the turn's failure.
+func (a *app) startTurn(ctx context.Context, sess store.Session, user auth.User, text string) (store.Event, func() error, error) {
+	turnCtx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	if _, busy := a.turns[sess.ID]; busy {
 		a.mu.Unlock()
 		cancel()
-		http.Error(w, "a turn is already running in this session", http.StatusConflict)
-		return
+		return store.Event{}, nil, errBusy
 	}
 	a.turns[sess.ID] = cancel
 	a.mu.Unlock()
 
-	payload, _ := json.Marshal(map[string]string{"text": body.Text})
-	userEvent, err := a.record(r.Context(), store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.user_message", Payload: payload})
+	payload, _ := json.Marshal(map[string]string{"text": text})
+	userEvent, err := a.record(ctx, store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.user_message", Payload: payload})
 	if err != nil {
 		a.endTurn(sess.ID)
-		reply(w, nil, err)
-		return
+		return store.Event{}, nil, err
 	}
-	go a.runTurn(ctx, sess, a.auth.User(r), body.Text)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	reply(w, userEvent, nil)
+	return userEvent, func() error { return a.runTurn(turnCtx, sess, user, text) }, nil
 }
 
 func (a *app) interrupt(w http.ResponseWriter, r *http.Request) {
@@ -461,9 +505,11 @@ func (a *app) endTurn(sessionID string) {
 
 // runTurn runs one turn as user: the runtime gives the agent's tools that person's email and
 // name, and makes them the author of commits made during the turn.
-func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, text string) {
+// It returns nil when the turn finished (bob.turn_done), and the failure otherwise (bob.turn_failed).
+func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, text string) (failure error) {
 	defer a.endTurn(sess.ID)
 	fail := func(err error) {
+		failure = err
 		log.Printf("session %s: turn failed: %v", sess.ID, err)
 		payload, _ := json.Marshal(map[string]string{"error": err.Error()})
 		_, _ = a.record(context.Background(), store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.turn_failed", Payload: payload})
@@ -511,6 +557,7 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 	if err == nil && done != nil && done.Error == "" {
 		_, _ = a.record(context.Background(), store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.turn_done", Payload: json.RawMessage(`{}`)})
 	}
+	return failure
 }
 
 // record stores an event and publishes it to live watchers.
