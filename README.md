@@ -36,6 +36,11 @@ repository and subfolder, and pick a worker to start a chat. Push a change to th
 press **Sync git** to pick it up — no restart. This repository's own `examples/config` works as a
 first project: `https://github.com/badcodetv/bob`, branch `main`, subfolder `examples/config`.
 
+Bob talks to each project's container with a password of its own (`BOB_RUNTIME_TOKEN`, derived
+from `BOB_SESSION_SECRET`), because containers can reach each other over Docker's network. The
+runtime refuses any request without it and removes it from the environment its harnesses and
+tools run in. Changing `BOB_SESSION_SECRET` means restarting every project.
+
 Each chat works in its own git worktree of the project's repository (`/project/work/<session>`,
 branch `bob/<session>`), so it can read and change the code without affecting other chats.
 Deleting the chat removes the worktree and the branch. Nothing is pushed.
@@ -64,8 +69,8 @@ the same name, so one project can have its own `GITHUB_TOKEN`. Values are encryp
 AES-256-GCM under `BOB_SECRETS_KEY` (32 random bytes, base64; `scripts/import-agent-bob-env`
 generates one) and bound to their project and name. They are never logged and never sent to the
 browser: the API lists names, who set them and when. Saving or deleting one restarts the
-project's container — unless a turn is running there, in which case it applies at the next
-restart. Names Bob or the image set (`BOB_*`, `GIT_*`, `PATH`, `HOME`, …) are refused. Without
+project's container — unless work is running there (a chat turn, a scheduled run, a git sync),
+in which case the change shows as pending and is applied the moment that work ends. Names Bob or the image set (`BOB_*`, `GIT_*`, `PATH`, `HOME`, …) are refused. Without
 `BOB_SECRETS_KEY` secrets are off, and a project that has some will not start.
 
 Keep `BOB_SECRETS_KEY` safe: losing it makes stored secrets unreadable. A worker can read its
@@ -105,7 +110,8 @@ status (`running`, `ok`, `failed`, `skipped`) and its chat.
 
 - **No overlap:** if the previous run is still going, the firing is recorded as skipped.
 - **Missed firings** (Bob was down) run once if the latest was under 6 hours ago; older ones are
-  recorded as skipped. When a local time happens twice as clocks go back, it fires once.
+  recorded as skipped. Firings from before a schedule was turned on, or had its timing changed,
+  are never run. When a local time happens twice as clocks go back, it fires once.
 - **Old chats:** only the newest `keep_sessions` (default 30) of a schedule's chats are kept.
 - **Pause everything:** `PATCH /api/settings {"schedules_paused": true}` (admin) stops every
   schedule firing; firings missed while paused follow the missed-firing rule on resume.
