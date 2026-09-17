@@ -31,14 +31,18 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
 4. **Native events, no common format.** A session's engine never changes, so each event is
    stored as the harness emitted it, in one envelope: `session, seq, engine, kind, payload`.
    Code that reads events switches on engine. The UI converts per engine, at display time only.
-5. **Git is configuration; the database is everything else.** A project points at a repository
-   and a subfolder holding `workers/*.md` (engine, model, effort, tools, system prompt) and
-   `skills/`. Prompts are written offline, with Claude Code, and pushed. Conversations, secrets,
-   schedules and memory live in Postgres. Git never holds a secret or a conversation.
+5. **Git holds configuration and the project's work; the database holds conversations and
+   secrets.** A project points at a repository and a subfolder holding `workers/*.md` (engine,
+   model, effort, tools, system prompt) and `skills/`. Prompts are written offline, with Claude
+   Code, and pushed. The same repository holds what the project's agents produce — code, data,
+   notes, reports — committed and pushed from each chat's worktree (pull before push).
+   Conversations, secrets, schedules and memory live in Postgres. Git never holds a secret or a
+   conversation.
 6. **Harnesses mix within a project.** Each worker names its engine.
 7. **A schedule invokes a worker.** Workers have no schedules of their own.
 8. **No model proxy, no mock model.** Credentials are passed into the project container. This is
-   an internal tool; subscription logins are used only by their owner.
+   an internal tool: every run, scheduled ones included, uses Kai's subscription logins, with Kai
+   present. An API-key path exists (`ANTHROPIC_API_KEY`) but is not the default.
 9. **Tools are MCP servers:** Bob's core server (memory, `request_human_attention`), a small
    Google Cloud Storage files server (`files_save/load/list`, a folder per session), and the
    Google Drive/Gmail connection carried over from agent-bob.
