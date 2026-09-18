@@ -25,11 +25,13 @@ skills/<name>/SKILL.md
 
 ```sh
 scripts/import-agent-bob-env          # once: reuse agent-bob's .env values (never printed)
-docker compose up -d postgres
-(cd runtime && npm ci && docker build -t bob-runtime:dev .)
-scripts/dev-api                       # API on :8090
-(cd web && npm ci && npm run dev)     # UI on http://localhost:8080 (proxies /api)
+./stack build                         # runtime image, web packages, API builds
+./stack start                         # Postgres, API on :8090, UI on http://localhost:8080
 ```
+
+`./stack` on its own lists the rest: `stop`, `restart`, `status`, `logs`, `psql`, `sql`, `test`,
+`containers` and `clean` (removes project containers and their volumes). It runs the API and the
+web app on the host, with only Postgres in Compose.
 
 Sign in with Google (an account in `BOB_PROJECT_MAP`), create a project pointing at a git
 repository and subfolder, and pick a worker to start a chat. Push a change to the repository and

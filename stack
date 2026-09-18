@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+#
+# ./stack — the local development stack for Bob.
+#
+#   ./stack build          build the runtime image and install the web app's packages
+#   ./stack start          Postgres, the API on :8090, the web app on :8080
+#     [--attach]             ... and follow the logs here instead of returning
+#   ./stack stop           stop the API, the web app and Postgres (data is kept)
+#   ./stack restart        stop, then start
+#   ./stack status         what is running, which projects exist, schedules on or off
+#   ./stack logs [api|web|postgres]   follow a log (default: api and web together)
+#   ./stack psql [args]    a psql shell in the local database
+#   ./stack sql "SELECT …" run one statement
+#   ./stack test           every test: Go (with a throwaway database), runtime, web typecheck
+#   ./stack containers     the project containers Bob has started, with their limits
+#   ./stack clean          remove every project container and volume (asks first)
+#
+# Deliberately small. The API and the web app run on the host — Go and Vite both
+# rebuild faster there, and the API needs the host's Docker socket to start
+# project containers anyway. Only Postgres runs in Compose.
+#
+# Settings come from .env (scripts/import-agent-bob-env writes one). Logs and
+# process ids live in .stack/, which is git-ignored.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+RUN=.stack
+API_LOG="$RUN/api.log"
+WEB_LOG="$RUN/web.log"
+API_PID="$RUN/api.pid"
+WEB_PID="$RUN/web.pid"
+API_URL=http://127.0.0.1:8090
+WEB_URL=http://localhost:8080
+
+say() { printf '── %s\n' "$*"; }
+die() { printf '!! %s\n' "$*" >&2; exit 1; }
+running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+need_env() { [ -f .env ] || die "no .env — run scripts/import-agent-bob-env first"; }
+
+postgres_up() {
+  docker compose up -d postgres >/dev/null
+  for _ in $(seq 1 60); do
+    docker compose exec -T postgres pg_isready -q -U bob && return 0
+    sleep 1
+  done
+  die "Postgres did not come up: ./stack logs postgres"
+}
+
+case "${1:-}" in
+
+build)
+  need_env
+  say "runtime image (bob-runtime:dev)"
+  (cd runtime && npm ci --silent && docker build -q -t bob-runtime:dev . >/dev/null)
+  say "web app packages"
+  (cd web && npm ci --silent)
+  say "API builds"
+  (cd api && go build ./...)
+  say "built. Start it with: ./stack start"
+  ;;
+
+start)
+  need_env
+  mkdir -p "$RUN"
+  docker image inspect bob-runtime:dev >/dev/null 2>&1 || die "no bob-runtime:dev image — run ./stack build first"
+  say "Postgres"
+  postgres_up
+  if running "$API_PID"; then
+    say "API already running (pid $(cat "$API_PID"))"
+  else
+    say "API on $API_URL"
+    ( set -a; . ./.env; set +a; cd api && exec go run ./cmd/bob ) >"$API_LOG" 2>&1 &
+    echo $! >"$API_PID"
+  fi
+  if running "$WEB_PID"; then
+    say "web app already running (pid $(cat "$WEB_PID"))"
+  else
+    say "web app on $WEB_URL"
+    ( cd web && exec npx vite --host 127.0.0.1 ) >"$WEB_LOG" 2>&1 &
+    echo $! >"$WEB_PID"
+  fi
+  for _ in $(seq 1 90); do
+    if curl -sf "$API_URL/healthz" >/dev/null && curl -sf "$WEB_URL" >/dev/null; then
+      say "ready: open $WEB_URL and sign in with Google"
+      [ "${2:-}" = "--attach" ] && exec tail -f "$API_LOG" "$WEB_LOG"
+      exit 0
+    fi
+    running "$API_PID" || { tail -20 "$API_LOG"; die "the API stopped — see $API_LOG"; }
+    sleep 1
+  done
+  die "it did not come up: ./stack logs"
+  ;;
+
+stop)
+  for pidfile in "$API_PID" "$WEB_PID"; do
+    if running "$pidfile"; then
+      pid=$(cat "$pidfile")
+      say "stopping $(basename "$pidfile" .pid) (pid $pid)"
+      # The API and Vite each start children; kill the whole group.
+      kill -- "-$(ps -o pgid= "$pid" | tr -d ' ')" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pidfile"
+  done
+  say "Postgres"
+  docker compose stop postgres >/dev/null 2>&1 || true
+  say "stopped. Project containers keep running; ./stack containers lists them."
+  ;;
+
+restart)
+  "$0" stop
+  "$0" start "${2:-}"
+  ;;
+
+status)
+  running "$API_PID" && say "API: running (pid $(cat "$API_PID"))" || say "API: stopped"
+  running "$WEB_PID" && say "web app: running (pid $(cat "$WEB_PID"))" || say "web app: stopped"
+  docker compose ps --format '── Postgres: {{.State}}' postgres 2>/dev/null | head -1
+  if curl -sf "$API_URL/healthz" >/dev/null 2>&1; then
+    "$0" sql "select name, repo_url from projects order by name" 2>/dev/null | sed 's/^/   project: /'
+    "$0" sql "select value from settings where key = 'schedules_paused'" 2>/dev/null \
+      | sed 's/^t\(rue\)\{0,1\}$/   schedules: PAUSED (Run now still works)/; s/^f\(alse\)\{0,1\}$/   schedules: running/'
+  fi
+  "$0" containers
+  ;;
+
+logs)
+  shift || true
+  case "${1:-}" in
+    postgres) exec docker compose logs -f postgres ;;
+    api) exec tail -f "$API_LOG" ;;
+    web) exec tail -f "$WEB_LOG" ;;
+    *) exec tail -f "$API_LOG" "$WEB_LOG" ;;
+  esac
+  ;;
+
+psql)
+  shift || true
+  exec docker compose exec postgres psql -U bob -d bob "$@"
+  ;;
+
+sql)
+  [ $# -ge 2 ] || die 'usage: ./stack sql "SELECT …"'
+  exec docker compose exec -T postgres psql -U bob -d bob -At -c "$2"
+  ;;
+
+test)
+  need_env
+  postgres_up
+  say "Go (throwaway databases on the local Postgres)"
+  (cd api && BOB_TEST_DATABASE_URL=postgres://bob:bob@127.0.0.1:5433/bob?sslmode=disable go test ./...)
+  say "runtime"
+  (cd runtime && npm test --silent)
+  say "web typecheck"
+  (cd web && npx tsc -b)
+  say "all green"
+  ;;
+
+containers)
+  docker ps -a --filter label=bob.project \
+    --format '   container: {{.Names}} · {{.Status}} · {{.Image}}' | sort
+  ;;
+
+clean)
+  docker ps -aq --filter label=bob.project | grep -q . || { say "no project containers"; exit 0; }
+  "$0" containers
+  printf '   remove these containers AND their volumes (chat worktrees and harness state are lost; conversations stay in Postgres)? [y/N] '
+  read -r answer
+  [ "$answer" = y ] || { say "stopped"; exit 1; }
+  docker rm -f $(docker ps -aq --filter label=bob.project) >/dev/null
+  docker volume ls -q --filter name=bob-project- | xargs -r docker volume rm >/dev/null
+  say "removed. The next chat in a project builds its container again."
+  ;;
+
+*)
+  awk 'NR > 2 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"
+  ;;
+esac
