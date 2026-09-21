@@ -104,6 +104,10 @@ type Worker struct {
 
 // WorkerList is what the runtime reports about a project's config folder.
 type WorkerList struct {
+	// Project is bob.md's front matter: settings the project keeps in git, beside its workers.
+	Project struct {
+		FilesRoot string `json:"files_root"`
+	} `json:"project"`
 	Sync struct {
 		OK     bool   `json:"ok"`
 		Commit string `json:"commit,omitempty"`

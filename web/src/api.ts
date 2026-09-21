@@ -1,9 +1,9 @@
 // Thin client for Bob's API. Every call is same-origin; the session cookie does the auth.
 
-export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; files_root: string; created_at: string }
+export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; created_at: string }
 export interface FileEntry { name: string; type: 'file' | 'dir' | 'link' | 'other'; size: number }
 export interface Worker { name: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string }
-export interface WorkerList { sync: { ok: boolean; commit?: string; error?: string }; workers: Worker[]; error?: string }
+export interface WorkerList { project: { files_root: string }; sync: { ok: boolean; commit?: string; error?: string }; workers: Worker[]; error?: string }
 export interface Session {
   id: string; project: string; worker: string; engine: string; harness_session_id: string; model: string; effort: string; created_at: string
   // Only on the project's session list: the first message, messages sent, and the last activity.

@@ -23,7 +23,6 @@ projects:
     repo: https://github.com/badcodetv/wolf
     ref: main
     config_dir: bob
-    files_root: site
   - name: demo
     repo: https://github.com/badcodetv/demo
 `))
@@ -33,7 +32,7 @@ projects:
 	if len(ps) != 2 {
 		t.Fatalf("got %d projects", len(ps))
 	}
-	if ps[0].Name != "wolf" || ps[0].Subfolder != "bob" || ps[0].FilesRoot != "site" {
+	if ps[0].Name != "wolf" || ps[0].Subfolder != "bob" {
 		t.Errorf("wolf: %+v", ps[0])
 	}
 	if ps[1].RepoRef != "main" {
@@ -47,7 +46,7 @@ func TestLoadRefuses(t *testing.T) {
 		{"bad name", "projects:\n  - name: Wolf\n    repo: x", "must match"},
 		{"duplicate", "projects:\n  - name: a\n    repo: x\n  - name: a\n    repo: y", "listed twice"},
 		{"no repo", "projects:\n  - name: a", "has no repo"},
-		{"misspelled key", "projects:\n  - name: a\n    repo: x\n    branch: main", "branch"},
+		{"misspelled key", "projects:\n  - name: a\n    repo: x\n    files_root: site", "files_root"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Load(write(t, tt.body))

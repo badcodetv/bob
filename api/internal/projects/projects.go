@@ -23,7 +23,6 @@ type file struct {
 		Repo      string `yaml:"repo"`
 		Ref       string `yaml:"ref"`
 		ConfigDir string `yaml:"config_dir"`
-		FilesRoot string `yaml:"files_root"`
 		// Image is what the project's compose service runs; Bob keeps it only to show it.
 		Image string `yaml:"image"`
 		// RepoMount is local development only: a host path bind-mounted at /seed in the
@@ -66,7 +65,7 @@ func Load(path string) ([]store.Project, error) {
 		}
 		out = append(out, store.Project{
 			Name: p.Name, RepoURL: p.Repo, RepoRef: ref, Subfolder: p.ConfigDir,
-			FilesRoot: p.FilesRoot, Image: p.Image, RepoMount: p.RepoMount,
+			Image: p.Image, RepoMount: p.RepoMount,
 		})
 	}
 	return out, nil

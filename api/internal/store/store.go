@@ -69,14 +69,12 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 type Project struct {
-	Name      string `json:"name"`
-	RepoURL   string `json:"repo_url"`
-	RepoRef   string `json:"repo_ref"`
-	Subfolder string `json:"subfolder"`
-	Image     string `json:"image"`
-	RepoMount string `json:"repo_mount,omitempty"`
-	// FilesRoot is the repository folder the Files page opens on; empty = the root.
-	FilesRoot string    `json:"files_root"`
+	Name      string    `json:"name"`
+	RepoURL   string    `json:"repo_url"`
+	RepoRef   string    `json:"repo_ref"`
+	Subfolder string    `json:"subfolder"`
+	Image     string    `json:"image"`
+	RepoMount string    `json:"repo_mount,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -94,10 +92,10 @@ func (s *Store) ReconcileProjects(ctx context.Context, list []Project) error {
 				p.RepoRef = "main"
 			}
 			names = append(names, p.Name)
-			if _, err := tx.Exec(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount, files_root, absent_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
-				ON CONFLICT (name) DO UPDATE SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5, repo_mount = $6, files_root = $7, absent_at = NULL`,
-				p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount, p.FilesRoot); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount, absent_at)
+				VALUES ($1, $2, $3, $4, $5, $6, NULL)
+				ON CONFLICT (name) DO UPDATE SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5, repo_mount = $6, absent_at = NULL`,
+				p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount); err != nil {
 				return fmt.Errorf("project %s: %w", p.Name, err)
 			}
 		}
@@ -115,11 +113,11 @@ func (s *Store) AbsentProjects(ctx context.Context) ([]string, error) {
 	return collect(rows, func(row pgx.Row) (string, error) { var n string; return n, row.Scan(&n) })
 }
 
-const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, files_root, created_at`
+const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, created_at`
 
 func scanProject(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.Name, &p.RepoURL, &p.RepoRef, &p.Subfolder, &p.Image, &p.RepoMount, &p.FilesRoot, &p.CreatedAt)
+	err := row.Scan(&p.Name, &p.RepoURL, &p.RepoRef, &p.Subfolder, &p.Image, &p.RepoMount, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, ErrNotFound
 	}

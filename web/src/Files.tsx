@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ExternalLinkIcon, FileIcon, FolderIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { api, encodePath, type FileEntry, type Project, type WorkerList } from './api'
+import { api, encodePath, type FileEntry, type WorkerList } from './api'
 import type { Activity } from './App'
 import { ago, PageBar } from './ui'
 
@@ -24,9 +24,7 @@ export function Files({ project, path, workers, activity, syncedAt, onSync, onEr
   onSync: () => void
   onError: (e: unknown) => void
 }) {
-  const [info, setInfo] = useState<Project | null>(null)
   const [base, setBase] = useState('')
-  useEffect(() => { api.project(project).then(setInfo).catch(onError) }, [project, onError])
   // Viewer links last 12 hours: get a fresh one on every git refresh and every 6 hours.
   useEffect(() => {
     const get = () => api.viewLink(project).then(setBase).catch(onError)
@@ -35,7 +33,8 @@ export function Files({ project, path, workers, activity, syncedAt, onSync, onEr
     return () => clearInterval(t)
   }, [project, onError, syncedAt])
 
-  const root = info?.files_root ?? ''
+  // Where the Files page opens: bob.md's files_root, reported with the workers.
+  const root = workers?.project.files_root ?? ''
   const current = path ?? root
   // The folder shown in the list: the path itself, or the folder holding the file.
   const [folder, setFolder] = useState<string | null>(null)
@@ -44,7 +43,7 @@ export function Files({ project, path, workers, activity, syncedAt, onSync, onEr
   const [missing, setMissing] = useState(false)
 
   const load = useCallback(async () => {
-    if (!info) return
+    if (!workers) return
     setMissing(false)
     const parent = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : ''
     const name = current.slice(current.lastIndexOf('/') + 1)
@@ -75,7 +74,7 @@ export function Files({ project, path, workers, activity, syncedAt, onSync, onEr
     } catch (err) {
       onError(err)
     }
-  }, [info, current, path, project, onError])
+  }, [workers, current, path, project, onError])
   useEffect(() => { load() }, [load, syncedAt])
 
   const href = (p: string) => `#/p/${project}/files/${encodePath(p)}`

@@ -46,7 +46,6 @@ export function ProjectSettings({ name, open, onOpenChange, onError }: {
             {row('Branch', project.repo_ref, 'main')}
             {row('Subfolder', project.subfolder, 'the repository root')}
             {row('Image', project.image, 'the default runtime image')}
-            {row('Files folder', project.files_root, 'the repository root')}
           </div>
         )}
 

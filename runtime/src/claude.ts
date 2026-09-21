@@ -3,8 +3,9 @@
 import { query, type EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import type { Worker } from './workers.js';
 import { turnEnv, type Turn, type TurnResult } from './turn.js';
+import type { Project } from './project.js';
 
-export async function runClaudeTurn(worker: Worker, turn: Turn, emit: (event: unknown) => void, signal: AbortSignal): Promise<TurnResult> {
+export async function runClaudeTurn(worker: Worker, project: Project, turn: Turn, emit: (event: unknown) => void, signal: AbortSignal): Promise<TurnResult> {
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
 
@@ -16,9 +17,9 @@ export async function runClaudeTurn(worker: Worker, turn: Turn, emit: (event: un
       cwd: turn.cwd,
       env: { ...process.env, ...turnEnv(turn) },
       resume: turn.resume,
-      model: turn.model || worker.model,
+      model: turn.model || worker.model || project.defaultModel,
       effort: (turn.effort || worker.effort) as EffortLevel | undefined,
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: worker.prompt },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: append(project, worker) },
       allowedTools: worker.tools,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -35,4 +36,10 @@ export async function runClaudeTurn(worker: Worker, turn: Turn, emit: (event: un
     return { harnessSessionId, error: String((err as Error)?.message ?? err) };
   }
   return { harnessSessionId };
+}
+
+/** Every worker sees the project's bob.md before its own prompt: what this project is, and how
+ *  its workers coordinate. The worker's own prompt comes last, so it can refine any of it. */
+function append(project: Project, worker: Worker): string {
+  return project.preamble ? project.preamble + '\n\n' + worker.prompt : worker.prompt;
 }
