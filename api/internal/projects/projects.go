@@ -28,6 +28,15 @@ type file struct {
 		// RepoMount is local development only: a host path bind-mounted at /seed in the
 		// project's container, used with repo "file:///seed".
 		RepoMount string `yaml:"repo_mount"`
+
+		// The rest are the compose generator's, not the API's. Bob never reads them — but
+		// KnownFields(true) below means a key this struct does not name stops Bob at boot, so
+		// every key scripts/compose-projects.mjs accepts must be named here too. Keep the two
+		// lists in step: that is what this comment is for.
+		Pass            []string `yaml:"pass"`
+		MemLimit        string   `yaml:"mem_limit"`
+		PidsLimit       int      `yaml:"pids_limit"`
+		StopGracePeriod string   `yaml:"stop_grace_period"`
 	} `yaml:"projects"`
 }
 

@@ -59,3 +59,32 @@ func TestLoadRefuses(t *testing.T) {
 		t.Error("a missing file should be an error")
 	}
 }
+
+// A deployed projects.yaml uses keys the API does not read but the compose generator does.
+// KnownFields(true) makes an unnamed key fatal at boot, so this pins every key
+// scripts/compose-projects.mjs accepts. Bob crash-looped on `pass` on 2026-09-21 because the
+// struct named six of the ten.
+func TestLoadAcceptsEveryGeneratorKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projects.yaml")
+	if err := os.WriteFile(path, []byte(`projects:
+  - name: wolf
+    repo: https://github.com/badcodetv/wolf
+    ref: main
+    config_dir: bob
+    pass: [CLAUDE_CODE_OAUTH_TOKEN, GITHUB_TOKEN, FRED_API_KEY]
+    image: example/runtime:tag
+    repo_mount: .
+    mem_limit: 8g
+    pids_limit: 4096
+    stop_grace_period: 10m
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("a deployed projects.yaml must load: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "wolf" || got[0].RepoRef != "main" || got[0].Subfolder != "bob" {
+		t.Errorf("wrong project: %+v", got)
+	}
+}
