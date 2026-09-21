@@ -240,15 +240,19 @@ The compose file has Postgres, Bob, and **one service per project**, generated f
 `projects.yaml` Bob reads:
 
 ```sh
-scripts/compose-projects.mjs projects.yaml compose.projects.yml
-docker compose -f compose.yml -f compose.projects.yml up -d
+scripts/compose-projects.mjs projects.yaml compose.projects.yml \
+  --image '<registry>/runtime:${TAG}' --network bob-projects
+docker compose up -d                  # compose.yml includes compose.projects.yml
 ```
 
 Every project service is on a network Bob also joins, publishes no ports, and carries its own
-repository settings, its `pass` variables as `${NAME}`, `BOB_RUNTIME_KEY`, `BOB_PROJECT_NAME`, and
-its limits (`mem_limit`, `pids_limit`, per project in the projects file). Bob needs
+repository settings, its `pass` variables as `${NAME}`, `BOB_RUNTIME_KEY`, `BOB_PROJECT_NAME`, its
+limits (`mem_limit`, `pids_limit`) and a `stop_grace_period` long enough for a turn in flight to
+finish — the runtime drains on SIGTERM, and Docker SIGKILLs it when that runs out. Bob needs
 `BOB_PROJECTS_FILE` and `BOB_RUNTIME_KEY`, and **no Docker socket**. `GET /healthz` answers 200
 when the database does.
+
+BadCode's own deployment is `apps/bob/` in the private ops repository.
 
 A project's volume is declared `external`, so:
 

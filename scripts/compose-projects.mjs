@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // Writes a compose file with one service per project, from the same projects file Bob reads.
 //
-//   scripts/compose-projects.mjs <projects.yaml> <out.yml> [--publish-from 8100]
+//   scripts/compose-projects.mjs <projects.yaml> <out.yml> [options]
+//
+//     --image <ref>        the runtime image every project runs (default bob-runtime:dev). Written
+//                          verbatim, so "…/runtime:${TAG}" stays a compose variable.
+//     --network <name>     the external network the containers join (default bob-projects)
+//     --publish-from <n>   local development: publish each runtime port on 127.0.0.1 from n
+//                          upwards instead of joining a network, and print BOB_RUNTIME_HOSTS
 //
 // Every project gets a container of its own: its volume, its repository settings and the variables
 // it is allowed to see. --publish-from is for local development, where Bob runs on the host and
@@ -19,14 +25,17 @@ import { createRequire } from 'node:module'
 
 const { parse } = createRequire(import.meta.url)('../runtime/node_modules/yaml/dist/index.js')
 
-const [source, out] = process.argv.slice(2)
-const publishFrom = Number(process.argv[process.argv.indexOf('--publish-from') + 1]) || 0
+const argv = process.argv.slice(2)
+const flag = (name, fallback) => (argv.indexOf(name) < 0 ? fallback : argv[argv.indexOf(name) + 1])
+const [source, out] = argv.filter((a, i) => !a.startsWith('--') && !argv[i - 1]?.startsWith('--'))
+const publishFrom = Number(flag('--publish-from', 0)) || 0
+const network = flag('--network', 'bob-projects')
 if (!source || !out) {
-  console.error('usage: compose-projects.mjs <projects.yaml> <out.yml> [--publish-from 8100]')
+  console.error('usage: compose-projects.mjs <projects.yaml> <out.yml> [--image ref] [--network name] [--publish-from 8100]')
   process.exit(2)
 }
 
-const image = process.env.BOB_RUNTIME_IMAGE || 'bob-runtime:dev'
+const image = flag('--image', process.env.BOB_RUNTIME_IMAGE || 'bob-runtime:dev')
 // What every project may see unless it says otherwise. A project's own list replaces this.
 const DEFAULT_PASS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'GITHUB_TOKEN']
 
@@ -64,13 +73,16 @@ projects.forEach((p, i) => {
     ...(p.repo_mount ? [`      - ${q(`${resolve(p.repo_mount)}:/seed:ro`)}`] : []),
     `    mem_limit: ${p.mem_limit ?? '8g'}`,
     `    pids_limit: ${p.pids_limit ?? 4096}`,
+    // Long enough for a turn in flight to finish: the runtime drains on SIGTERM, and Docker
+    // SIGKILLs it when this runs out, which is exactly the dropped turn draining exists to avoid.
+    `    stop_grace_period: ${p.stop_grace_period ?? '10m'}`,
   ]
   if (publishFrom) {
     const port = publishFrom + i
     lines.push(`    ports: ["127.0.0.1:${port}:8080"]`)
     hosts.push(`${p.name}=127.0.0.1:${port}`)
   } else {
-    lines.push(`    networks: [bob]`)
+    lines.push(`    networks: [${network}]`)
   }
   services.push(lines.join('\n'))
   // external, and this is load-bearing twice over. The volume is named exactly as Bob has always
@@ -87,7 +99,7 @@ writeFileSync(out, [
   services.join('\n'),
   'volumes:',
   volumes.join('\n'),
-  ...(publishFrom ? [] : ['networks:', '  bob:', '    external: true']),
+  ...(publishFrom ? [] : ['networks:', `  ${network}:`, '    external: true']),
   '',
 ].join('\n'))
 
