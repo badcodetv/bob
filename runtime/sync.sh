@@ -16,6 +16,9 @@ out=$(
     git -C "$P/repo" remote set-url origin "$BOB_REPO_URL" &&
     git -C "$P/repo" fetch --quiet origin "$ref" && git -C "$P/repo" reset --quiet --hard FETCH_HEAD
   else
+    # Full depth, deliberately. A project may prove a file is append-only by walking every commit
+    # that ever touched it (Wolf's `wolf check` does exactly this). --depth would make that walk
+    # silently incomplete rather than fail, which is the worst way for a check to stop working.
     rm -rf "$P/repo" && git clone --quiet --branch "$ref" "$BOB_REPO_URL" "$P/repo"
   fi 2>&1
 )
