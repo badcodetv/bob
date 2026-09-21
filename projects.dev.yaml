@@ -1,0 +1,22 @@
+# The projects a local Bob serves (BOB_PROJECTS_FILE). ./stack generates a compose file from this,
+# so every project here also gets a container. Adding one means ./stack restart.
+#
+#   name        lower-case letters, numbers and dashes. Also the container and volume name, so it
+#               can never change.
+#   repo        the git repository holding the project's config folder
+#   ref         branch (default main)
+#   config_dir  the folder in it holding bob.md, workers/, skills/
+#   pass        variables from .env this project may see (default: the Claude and GitHub tokens)
+#   repo_mount  local development only: a host path mounted at /seed, used with repo file:///seed
+projects:
+  - name: bob-examples
+    repo: https://github.com/badcodetv/bob
+    ref: main
+    config_dir: examples/config
+  # This very checkout, mounted read-only at /seed, so a change to examples/config is picked up
+  # by pressing Sync git — no push needed.
+  - name: local
+    repo: file:///seed
+    ref: main
+    config_dir: examples/config
+    repo_mount: .

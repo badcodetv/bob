@@ -1,4 +1,4 @@
-import { timingSafeEqual, createHash } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 /** Whether an Authorization header is basic auth with password token (any user name). */
 export function checkAuth(header: string | undefined, token: string): boolean {
@@ -9,4 +9,12 @@ export function checkAuth(header: string | undefined, token: string): boolean {
   // Compare digests, so the comparison takes the same time whatever the lengths.
   const digest = (s: string) => createHash('sha256').update(s).digest()
   return timingSafeEqual(digest(password), digest(token))
+}
+
+/**
+ * This project's password: HMAC-SHA256 over "bob-runtime\0<project>" under BOB_RUNTIME_KEY.
+ * Bob's api/internal/runtime.Token computes the same bytes; the two must not drift.
+ */
+export function runtimeToken(key: string, project: string): string {
+  return createHmac('sha256', key).update(`bob-runtime\0${project}`).digest('hex');
 }

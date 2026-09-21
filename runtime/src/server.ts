@@ -1,9 +1,13 @@
 // The runtime server: the only process Bob's API talks to inside a project container.
-// Every request must carry BOB_RUNTIME_TOKEN as basic-auth password (checkAuth): containers of
+// Every request must carry this project's password as basic auth (checkAuth): containers of
 // other projects can reach this port over the Docker network, and must not be able to use it.
 //
+// The password is derived here, from BOB_RUNTIME_KEY and the project's name, the same way Bob
+// derives it. Nothing writes it down: the compose file carries the key, which is shared, and the
+// name, which is not a secret.
+//
 //   GET  /health
-//   GET  /workers                      the project's workers, read from git, plus the last sync
+//   GET  /workers                      the project's workers and bob.md settings, plus the last sync
 //   POST /sync                         pull the project's git folder again
 //   DELETE /sessions/<id>              remove a session's worktree and branch
 //   GET  /files/<path>                 a file from the synced checkout, or a directory's {entries}
@@ -17,24 +21,27 @@ import { promisify } from 'node:util';
 import { pipeline } from 'node:stream';
 import { join } from 'node:path';
 import { loadWorkers, type Worker } from './workers.js';
+import { loadProject, NO_PROJECT, type Project } from './project.js';
 import { runClaudeTurn } from './claude.js';
 import { prepareWorkdir, removeWorkdir } from './workdir.js';
 import { listDir, openFile, resolveRepoPath } from './files.js';
-import { checkAuth } from './auth.js';
+import { checkAuth, runtimeToken } from './auth.js';
 import type { Turn, TurnResult } from './turn.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
-const TOKEN = process.env.BOB_RUNTIME_TOKEN ?? '';
-// Nothing started from here (harnesses, their tools, git sync) inherits the token.
-delete process.env.BOB_RUNTIME_TOKEN;
-if (!TOKEN) {
-  console.error('BOB_RUNTIME_TOKEN is not set; refusing to serve');
+const KEY = process.env.BOB_RUNTIME_KEY ?? '';
+const NAME = process.env.BOB_PROJECT_NAME ?? '';
+// Nothing started from here (harnesses, their tools, git sync) inherits the key.
+delete process.env.BOB_RUNTIME_KEY;
+if (!KEY || !NAME) {
+  console.error('BOB_RUNTIME_KEY and BOB_PROJECT_NAME are required; refusing to serve');
   process.exit(1);
 }
+const TOKEN = runtimeToken(KEY, NAME);
 const PROJECT_DIR = process.env.BOB_PROJECT_DIR ?? '/project';
 const CONFIG_DIR = join(PROJECT_DIR, 'repo', process.env.BOB_REPO_SUBFOLDER ?? '');
 
-type Driver = (worker: Worker, turn: Turn, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
+type Driver = (worker: Worker, project: Project, turn: Turn, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
 const drivers: Partial<Record<Worker['engine'], Driver>> = { claude: runClaudeTurn };
 
 createServer((req, res) => {
@@ -82,11 +89,18 @@ let syncing: Promise<unknown> = Promise.resolve();
 
 async function workers() {
   const sync = JSON.parse(await readFile(join(PROJECT_DIR, '.bob', 'sync.json'), 'utf8').catch(() => '{"ok":false,"error":"never synced"}'));
-  try {
-    return { sync, workers: await loadWorkers(join(CONFIG_DIR, 'workers')) };
-  } catch (err) {
-    return { sync, workers: [], error: String((err as Error)?.message ?? err) };
-  }
+  // A bad bob.md must not hide the workers, and a bad worker must not hide bob.md: each is
+  // reported on its own, and whatever could be read is still returned.
+  const problems: string[] = [];
+  const project = await loadProject(CONFIG_DIR).catch((err) => {
+    problems.push(String((err as Error)?.message ?? err));
+    return NO_PROJECT;
+  });
+  const workers = await loadWorkers(join(CONFIG_DIR, 'workers')).catch((err) => {
+    problems.push(String((err as Error)?.message ?? err));
+    return [];
+  });
+  return { sync, project: { files_root: project.filesRoot }, workers, error: problems.join('; ') || undefined };
 }
 
 async function turn(req: IncomingMessage, res: ServerResponse) {
@@ -96,6 +110,8 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
   }
   const worker = (await loadWorkers(join(CONFIG_DIR, 'workers'))).find((w) => w.name === body.worker);
   if (!worker) return sendJSON(res, 404, { error: `no worker named ${body.worker}` });
+  // Read fresh every turn: a bob.md pushed and synced takes effect on the next message.
+  const project = await loadProject(CONFIG_DIR).catch(() => NO_PROJECT);
   const driver = drivers[worker.engine];
   if (!driver) return sendJSON(res, 501, { error: `engine ${worker.engine} is not supported yet` });
 
@@ -107,7 +123,7 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
   const line = (v: unknown) => res.write(JSON.stringify(v) + '\n');
 
   try {
-    const result = await driver(worker, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd,
+    const result = await driver(worker, project, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd,
       userEmail: body.user_email, userName: body.user_name },
       (event) => line({ engine: worker.engine, event }), abort.signal);
     line({ done: true, harness_session_id: result.harnessSessionId, error: result.error });
