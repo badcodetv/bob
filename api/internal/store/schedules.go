@@ -67,9 +67,12 @@ func (s *Store) Schedule(ctx context.Context, id string) (Schedule, error) {
 
 // Schedules lists a project's schedules by name; with project "", every enabled schedule.
 func (s *Store) Schedules(ctx context.Context, project string) ([]Schedule, error) {
-	q, args := `SELECT `+scheduleCols+` FROM schedules WHERE project = $1 ORDER BY name`, []any{project}
+	// present keeps the schedules of a project the projects file no longer lists out of every
+	// answer: they must not fire, and they are not the caller's business either.
+	const present = ` AND EXISTS (SELECT 1 FROM projects p WHERE p.name = schedules.project AND p.absent_at IS NULL)`
+	q, args := `SELECT `+scheduleCols+` FROM schedules WHERE project = $1`+present+` ORDER BY name`, []any{project}
 	if project == "" {
-		q, args = `SELECT `+scheduleCols+` FROM schedules WHERE enabled ORDER BY project, name`, nil
+		q, args = `SELECT `+scheduleCols+` FROM schedules WHERE enabled`+present+` ORDER BY project, name`, nil
 	}
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {

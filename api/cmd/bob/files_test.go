@@ -51,7 +51,7 @@ func TestSafeFilePath(t *testing.T) {
 // headers on every kind of response, and refuses escapes before reaching the runtime.
 func TestFileViewerHeaders(t *testing.T) {
 	st := testStore(t)
-	if _, err := st.CreateProject(t.Context(), store.Project{Name: "wolf"}); err != nil {
+	if err := st.ReconcileProjects(t.Context(), []store.Project{{Name: "wolf", RepoURL: "https://example.invalid/wolf"}}); err != nil {
 		t.Fatal(err)
 	}
 	var asked []string

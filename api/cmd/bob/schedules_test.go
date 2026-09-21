@@ -142,7 +142,7 @@ func newScheduleApp(t *testing.T) (*app, *fakeRuntime, *clock) {
 	t.Cleanup(srv.Close)
 	c := &clock{t: time.Now()}
 	a := &app{store: st, broker: broker.New(), runtime: fakeContainers{srv.URL}, now: c.now, turns: map[string]context.CancelFunc{}}
-	if _, err := st.CreateProject(t.Context(), store.Project{Name: "wolf"}); err != nil {
+	if err := st.ReconcileProjects(t.Context(), []store.Project{{Name: "wolf", RepoURL: "https://example.invalid/wolf"}}); err != nil {
 		t.Fatal(err)
 	}
 	return a, rt, c

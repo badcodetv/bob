@@ -1,18 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ChevronDownIcon, ClockIcon, FolderOpenIcon, LayoutGridIcon, PlusIcon, RefreshCwIcon } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { api, type Project, type Session, type WorkerList } from './api'
+import type { Project, Session, WorkerList } from './api'
 import type { Activity, Page } from './App'
-import { ago, engineName, Menu, MenuItem, MenuSeparator, when, WorkerBadge } from './ui'
+import { ago, engineName, Menu, MenuItem, when, WorkerBadge } from './ui'
 
 const SHOWN_CHATS = 5
 
-export function Sidebar({ email, admin, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, page, onSync, onError, onProjectCreated, onSignOut }: {
+export function Sidebar({ email, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, page, onSync, onSignOut }: {
   email: string
-  admin: boolean
   projects: Project[]
   project?: string
   workers: WorkerList | null
@@ -23,11 +19,8 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
   currentWorker?: string
   page: Page
   onSync: () => void
-  onError: (e: unknown) => void
-  onProjectCreated: (name: string) => void
   onSignOut: () => void
 }) {
-  const [creating, setCreating] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t) }, [])
@@ -50,8 +43,6 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
           {projects.map((p) => (
             <MenuItem key={p.name} checked={p.name === project} onClick={() => { window.location.hash = `/p/${p.name}` }}>{p.name}</MenuItem>
           ))}
-          {admin && projects.length > 0 && <MenuSeparator />}
-          {admin && <MenuItem checked={false} onClick={() => setCreating(true)}>New project…</MenuItem>}
         </Menu>
         {project && <SyncStatus workers={workers} activity={activity} syncedAt={syncedAt} onSync={onSync} />}
       </div>
@@ -123,7 +114,6 @@ export function Sidebar({ email, admin, projects, project, workers, sessions, ac
         <button type="button" onClick={onSignOut} className="hover:bg-accent hover:text-foreground rounded px-1 py-0.5">Sign out</button>
       </div>
 
-      <CreateProject open={creating} onOpenChange={setCreating} onError={onError} onCreated={(name) => { setCreating(false); onProjectCreated(name) }} />
     </aside>
   )
 }
@@ -160,43 +150,3 @@ function SyncStatus({ workers, activity, syncedAt, onSync }: { workers: WorkerLi
   )
 }
 
-function CreateProject({ open, onOpenChange, onCreated, onError }: {
-  open: boolean; onOpenChange: (open: boolean) => void; onCreated: (name: string) => void; onError: (e: unknown) => void
-}) {
-  const empty = { name: '', repo_url: '', repo_ref: 'main', subfolder: '' }
-  const [form, setForm] = useState(empty)
-  const [busy, setBusy] = useState(false)
-  useEffect(() => { if (open) setForm(empty) }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const field = (key: keyof typeof form, label: string, placeholder: string, hint?: string) => (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="font-medium">{label}</span>
-      <Input value={form[key]} placeholder={placeholder} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
-      {hint && <span className="text-muted-foreground text-xs">{hint}</span>}
-    </label>
-  )
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <form className="flex flex-col gap-4" onSubmit={(e) => {
-          e.preventDefault()
-          setBusy(true)
-          api.createProject(form).then((p) => onCreated(p.name)).catch(onError).finally(() => setBusy(false))
-        }}>
-          <DialogHeader>
-            <DialogTitle>New project</DialogTitle>
-            <DialogDescription>A project is a folder in a git repository holding its workers and skills, plus a computer to run them on.</DialogDescription>
-          </DialogHeader>
-          {field('name', 'Name', 'marketing', 'Lower-case letters, numbers and dashes.')}
-          {field('repo_url', 'Repository', 'https://github.com/org/repo')}
-          {field('repo_ref', 'Branch', 'main')}
-          {field('subfolder', 'Folder', 'e.g. bob', 'Where workers/ and skills/ live. Leave empty for the repository root.')}
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-            <Button type="submit" disabled={busy || !form.name || !form.repo_url}>{busy ? 'Creating…' : 'Create project'}</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}

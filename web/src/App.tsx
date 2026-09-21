@@ -89,11 +89,9 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
           'fixed inset-y-0 left-0 z-40 w-[min(300px,86vw)] -translate-x-full transition-transform duration-200 md:static md:z-auto md:w-68 md:translate-x-0 md:transition-none',
           drawer && 'translate-x-0',
         )}>
-          <Sidebar email={email} admin={admin} projects={projects} project={project} workers={workers} sessions={sessions}
+          <Sidebar email={email} projects={projects} project={project} workers={workers} sessions={sessions}
             activity={activity} syncedAt={syncedAt} currentSession={session} currentWorker={newWorker}
-            page={page} onSync={sync} onError={guard}
-            onProjectCreated={(name) => { loadProjects(); window.location.hash = `/p/${name}` }}
-            onSignOut={() => api.logout().then(onSignedOut)} />
+            page={page} onSync={sync} onSignOut={() => api.logout().then(onSignedOut)} />
         </div>
         {drawer && <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setDrawer(false)} />}
 
@@ -109,8 +107,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
             : project && page === 'files' ? <Files key={project} project={project} path={filePath} workers={workers} activity={activity} syncedAt={syncedAt} onSync={sync} onError={guard} />
             : project && page === 'schedules' ? <Schedules key={project} project={project} admin={admin} workers={workers} onRan={loadSessions} onError={guard} />
             : project ? <Overview key={project} name={project} admin={admin} workers={workers} sessions={sessions} activity={activity}
-                syncedAt={syncedAt} onSync={sync} onError={guard}
-                onDeleted={() => { loadProjects(); window.location.hash = '/' }} />
+                syncedAt={syncedAt} onSync={sync} onError={guard} />
             : <Home projects={projects} />}
         </main>
       </div>

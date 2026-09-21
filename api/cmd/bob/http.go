@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -24,13 +23,10 @@ import (
 	"github.com/badcodetv/bob/internal/store"
 )
 
-// containers starts and removes project containers (runtime.Manager; faked in tests).
+// containers finds a project's runtime server (runtime.Manager; faked in tests). Bob does not
+// start containers: each project's is declared in the deploy's compose file.
 type containers interface {
 	Ensure(ctx context.Context, p store.Project) (string, error)
-	Recreate(ctx context.Context, project string) error
-	Destroy(ctx context.Context, project string) error
-	// Revive lets a project name that was destroyed have a container again (it was re-created).
-	Revive(project string)
 }
 
 type app struct {
@@ -94,11 +90,7 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 		api.Handle(pattern, a.guard(p, h))
 	}
 	handle("GET /api/projects", signedIn, a.listProjects)
-	handle("POST /api/projects", admin, a.createProject)
 	handle("GET /api/projects/{project}", member, a.getProject)
-	handle("PATCH /api/projects/{project}", admin, a.updateProject)
-	handle("DELETE /api/projects/{project}", admin, a.deleteProject)
-	handle("POST /api/projects/{project}/restart", admin, a.restartProject)
 	handle("POST /api/projects/{project}/sync", member, a.syncProject)
 	handle("GET /api/projects/{project}/workers", member, a.listWorkers)
 	handle("GET /api/projects/{project}/sessions", member, a.listSessions)
@@ -251,87 +243,9 @@ func (a *app) listProjects(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"projects": visible}, err)
 }
 
-func (a *app) createProject(w http.ResponseWriter, r *http.Request) {
-	var p store.Project
-	if !decode(w, r, &p) {
-		return
-	}
-	p, err := a.store.CreateProject(r.Context(), p)
-	if err == nil {
-		a.runtime.Revive(p.Name)
-	}
-	reply(w, p, err)
-}
-
 func (a *app) getProject(w http.ResponseWriter, r *http.Request) {
 	p, err := a.store.Project(r.Context(), r.PathValue("project"))
 	reply(w, p, err)
-}
-
-// updateProject saves new repository settings and recreates the project's container, keeping
-// its volume, so the next request boots with them and syncs git.
-func (a *app) updateProject(w http.ResponseWriter, r *http.Request) {
-	var body store.Project
-	if !decode(w, r, &body) {
-		return
-	}
-	body.Name = r.PathValue("project")
-	body.FilesRoot = strings.Trim(body.FilesRoot, "/ ")
-	if !safeFilePath("/" + body.FilesRoot) {
-		http.Error(w, "files_root must be a folder inside the repository", http.StatusBadRequest)
-		return
-	}
-	before, err := a.store.Project(r.Context(), body.Name)
-	if err != nil {
-		reply(w, nil, err)
-		return
-	}
-	p, err := a.store.UpdateProject(r.Context(), body)
-	if err != nil {
-		reply(w, nil, err)
-		return
-	}
-	// Only settings the container is started with need a new container.
-	if p.RepoURL == before.RepoURL && p.RepoRef == before.RepoRef && p.Subfolder == before.Subfolder && p.Image == before.Image {
-		reply(w, p, nil)
-		return
-	}
-	reply(w, p, a.runtime.Recreate(r.Context(), p.Name))
-}
-
-// deleteProject stops the project's running turns, removes its container and volume, then
-// deletes it with its sessions and their events.
-func (a *app) deleteProject(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("project")
-	sessions, err := a.store.Sessions(r.Context(), name)
-	if err != nil {
-		reply(w, nil, err)
-		return
-	}
-	if _, err := a.store.Project(r.Context(), name); err != nil {
-		reply(w, nil, err)
-		return
-	}
-	for _, s := range sessions {
-		a.endTurn(s.ID)
-	}
-	// Destroy also stops any later Ensure for this name, so work already in flight (a scheduled run,
-	// a page loading files) cannot re-create the container between here and the row's deletion.
-	if err := a.runtime.Destroy(r.Context(), name); err != nil {
-		a.runtime.Revive(name)
-		reply(w, nil, fmt.Errorf("removing the project's container and volume: %w", err))
-		return
-	}
-	reply(w, map[string]bool{"ok": true}, a.store.DeleteProject(r.Context(), name))
-}
-
-func (a *app) restartProject(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("project")
-	if _, err := a.store.Project(r.Context(), name); err != nil {
-		reply(w, nil, err)
-		return
-	}
-	reply(w, map[string]bool{"ok": true}, a.runtime.Recreate(r.Context(), name))
 }
 
 // busy names the projects with work in progress — a turn, a scheduled run or a git sync. A deploy

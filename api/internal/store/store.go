@@ -80,33 +80,39 @@ type Project struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (s *Store) CreateProject(ctx context.Context, p Project) (Project, error) {
-	if p.RepoRef == "" {
-		p.RepoRef = "main"
-	}
-	err := s.db.QueryRow(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount, files_root)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING created_at`,
-		p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount, p.FilesRoot).Scan(&p.CreatedAt)
-	return p, err
+// ReconcileProjects brings the table in step with the list read from the projects file: every
+// listed project is inserted or updated and marked present, and any other is marked absent.
+//
+// A project is never deleted here. Its sessions and schedules point at this row, and they are the
+// record of work that happened; an absent project simply stops being served. Re-listing its name
+// brings it back, with its history, which is why names must never be reused for something else.
+func (s *Store) ReconcileProjects(ctx context.Context, list []Project) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		names := make([]string, 0, len(list))
+		for _, p := range list {
+			if p.RepoRef == "" {
+				p.RepoRef = "main"
+			}
+			names = append(names, p.Name)
+			if _, err := tx.Exec(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount, files_root, absent_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
+				ON CONFLICT (name) DO UPDATE SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5, repo_mount = $6, files_root = $7, absent_at = NULL`,
+				p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount, p.FilesRoot); err != nil {
+				return fmt.Errorf("project %s: %w", p.Name, err)
+			}
+		}
+		_, err := tx.Exec(ctx, `UPDATE projects SET absent_at = now() WHERE absent_at IS NULL AND name <> ALL($1)`, names)
+		return err
+	})
 }
 
-// UpdateProject changes a project's repository settings. The name cannot change: the
-// project's container and volume are named after it.
-func (s *Store) UpdateProject(ctx context.Context, p Project) (Project, error) {
-	if p.RepoRef == "" {
-		p.RepoRef = "main"
+// AbsentProjects names the projects in the table that the projects file no longer lists.
+func (s *Store) AbsentProjects(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Query(ctx, `SELECT name FROM projects WHERE absent_at IS NOT NULL ORDER BY name`)
+	if err != nil {
+		return nil, err
 	}
-	return scanProject(s.db.QueryRow(ctx, `UPDATE projects SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5, files_root = $6
-		WHERE name = $1 RETURNING `+projectCols, p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.FilesRoot))
-}
-
-// DeleteProject removes a project with all its sessions and their events.
-func (s *Store) DeleteProject(ctx context.Context, name string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM projects WHERE name = $1`, name)
-	if err == nil && tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return err
+	return collect(rows, func(row pgx.Row) (string, error) { var n string; return n, row.Scan(&n) })
 }
 
 const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, files_root, created_at`
@@ -120,12 +126,14 @@ func scanProject(row pgx.Row) (Project, error) {
 	return p, err
 }
 
+// Project reads one project Bob serves. A project the file no longer lists is not found, so its
+// routes 404 exactly as an unknown name does.
 func (s *Store) Project(ctx context.Context, name string) (Project, error) {
-	return scanProject(s.db.QueryRow(ctx, `SELECT `+projectCols+` FROM projects WHERE name = $1`, name))
+	return scanProject(s.db.QueryRow(ctx, `SELECT `+projectCols+` FROM projects WHERE name = $1 AND absent_at IS NULL`, name))
 }
 
 func (s *Store) Projects(ctx context.Context) ([]Project, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+projectCols+` FROM projects ORDER BY name`)
+	rows, err := s.db.Query(ctx, `SELECT `+projectCols+` FROM projects WHERE absent_at IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

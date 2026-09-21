@@ -10,7 +10,7 @@ import { ago, engineName, PageBar, prettyModel, when, WorkerBadge } from './ui'
 const RECENT = 5
 
 /** A project's home: what it is, what's been happening in it, and who works in it. */
-export function Overview({ name, admin, workers, sessions, activity, syncedAt, onSync, onError, onDeleted }: {
+export function Overview({ name, admin, workers, sessions, activity, syncedAt, onSync, onError }: {
   name: string
   admin: boolean
   workers: WorkerList | null
@@ -19,7 +19,6 @@ export function Overview({ name, admin, workers, sessions, activity, syncedAt, o
   syncedAt?: Date
   onSync: () => void
   onError: (e: unknown) => void
-  onDeleted: () => void
 }) {
   const [project, setProject] = useState<Project | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -47,8 +46,7 @@ export function Overview({ name, admin, workers, sessions, activity, syncedAt, o
         </Button>
         {admin && <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>Settings</Button>}
       </PageBar>
-      <ProjectSettings name={name} open={settingsOpen} onOpenChange={setSettingsOpen} onError={onError}
-        onSaved={() => { load(); onSync() }} onDeleted={onDeleted} />
+      <ProjectSettings name={name} open={settingsOpen} onOpenChange={setSettingsOpen} onError={onError} />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[1120px] flex-col gap-8 px-4 pt-6 pb-16 md:px-10 md:pt-9">
@@ -134,7 +132,7 @@ export function Overview({ name, admin, workers, sessions, activity, syncedAt, o
                   )}
               </Section>
 
-              <Section title="Setup" action={admin && <button type="button" onClick={() => setSettingsOpen(true)} className="text-muted-foreground hover:text-foreground text-[13px] underline underline-offset-2">Edit</button>}>
+              <Section title="Setup" action={admin && <button type="button" onClick={() => setSettingsOpen(true)} className="text-muted-foreground hover:text-foreground text-[13px] underline underline-offset-2">Details</button>}>
                 <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2.5 px-1 pt-1.5 text-[13.5px]">
                   <SetupRow label="Repository">
                     {folderLink ? <a href={folderLink} target="_blank" rel="noreferrer" className="decoration-border hover:decoration-foreground underline underline-offset-2">{repo}</a> : repo}
