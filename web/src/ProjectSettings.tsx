@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api, type Project } from './api'
-import { SecretsEditor } from './SecretsEditor'
 
 type Editable = Pick<Project, 'repo_url' | 'repo_ref' | 'subfolder' | 'image' | 'files_root'>
 
@@ -75,10 +74,6 @@ export function ProjectSettings({ name, open, onOpenChange, onSaved, onDeleted, 
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button onClick={save} disabled={busy || !form}>{busy ? 'Working…' : 'Save'}</Button>
-        </div>
-
-        <div className="border-t pt-3">
-          <SecretsEditor project={name} onError={onError} />
         </div>
 
         <div className="mt-2 flex flex-col gap-2 rounded border border-destructive/40 p-3 text-sm">

@@ -33,9 +33,6 @@ type Config struct {
 	Network string
 	// PassEnv lists variables copied from Bob's own environment into every project container.
 	PassEnv map[string]string
-	// Secrets returns a project's own secrets, decrypted, when its container is created. They
-	// are added after PassEnv, so a project's secret replaces a passed variable of the same name.
-	Secrets func(ctx context.Context, project string) (map[string]string, error)
 	// TokenKey derives each project's runtime token (see Token). Required.
 	TokenKey []byte
 	// Limits for every project container; zero means none.
@@ -73,13 +70,6 @@ func (m *Manager) Revive(project string) {
 
 func NewManager(d *docker.Client, cfg Config) *Manager { return &Manager{docker: d, cfg: cfg} }
 
-// SetSecrets sets Config.Secrets after construction (the source needs the app that holds the Manager).
-func (m *Manager) SetSecrets(f func(ctx context.Context, project string) (map[string]string, error)) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cfg.Secrets = f
-}
-
 func ContainerName(project string) string { return "bob-project-" + project }
 
 // VolumeName is the project's volume: its repository checkout, chat worktrees and harness state.
@@ -96,13 +86,7 @@ func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
 	name := ContainerName(p.Name)
 	st, err := m.docker.Inspect(ctx, name)
 	if errors.Is(err, docker.ErrNotFound) {
-		var secrets map[string]string
-		if m.cfg.Secrets != nil {
-			if secrets, err = m.cfg.Secrets(ctx, p.Name); err != nil {
-				return "", err
-			}
-		}
-		id, cerr := m.docker.Create(ctx, m.spec(p, secrets))
+		id, cerr := m.docker.Create(ctx, m.spec(p))
 		if cerr != nil {
 			return "", cerr
 		}
@@ -144,13 +128,7 @@ func (m *Manager) ReplaceStale(ctx context.Context, projects []store.Project) (r
 		if err != nil {
 			return replaced, err
 		}
-		var secrets map[string]string
-		if m.cfg.Secrets != nil {
-			if secrets, err = m.cfg.Secrets(ctx, p.Name); err != nil {
-				return replaced, err
-			}
-		}
-		if st.Labels[SpecLabel] == m.spec(p, secrets).Labels[SpecLabel] {
+		if st.Labels[SpecLabel] == m.spec(p).Labels[SpecLabel] {
 			continue
 		}
 		if err := m.docker.Remove(ctx, ContainerName(p.Name)); err != nil {
@@ -183,16 +161,13 @@ func (m *Manager) Destroy(ctx context.Context, project string) error {
 	return m.docker.RemoveVolume(ctx, VolumeName(project))
 }
 
-func (m *Manager) spec(p store.Project, secrets map[string]string) docker.ContainerSpec {
+func (m *Manager) spec(p store.Project) docker.ContainerSpec {
 	image := p.Image
 	if image == "" {
 		image = m.cfg.DefaultImage
 	}
 	vars := map[string]string{}
 	for k, v := range m.cfg.PassEnv {
-		vars[k] = v
-	}
-	for k, v := range secrets {
 		vars[k] = v
 	}
 	vars["BOB_REPO_URL"], vars["BOB_REPO_REF"], vars["BOB_REPO_SUBFOLDER"] = p.RepoURL, p.RepoRef, p.Subfolder
@@ -219,8 +194,8 @@ func (m *Manager) spec(p store.Project, secrets map[string]string) docker.Contai
 		NanoCPUs:        m.cfg.NanoCPUs,
 		PidsLimit:       m.cfg.PidsLimit,
 	}
-	// A keyed hash, not a plain one: the environment holds secrets, and labels are readable by
-	// anyone who can list containers.
+	// A keyed hash, not a plain one: the environment holds credentials, and labels are readable
+	// by anyone who can list containers.
 	canonical, _ := json.Marshal(s)
 	mac := hmac.New(sha256.New, m.cfg.TokenKey)
 	mac.Write([]byte("bob-spec\x00"))

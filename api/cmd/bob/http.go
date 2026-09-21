@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,6 @@ import (
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/engines"
 	"github.com/badcodetv/bob/internal/runtime"
-	"github.com/badcodetv/bob/internal/secrets"
 	"github.com/badcodetv/bob/internal/store"
 )
 
@@ -42,18 +42,16 @@ type app struct {
 	store     *store.Store
 	broker    *broker.Broker
 	runtime   containers
-	secrets   *secrets.Box // nil when BOB_SECRETS_KEY is unset: secrets are off
 	now       func() time.Time
 
 	mu        sync.Mutex
 	turns     map[string]context.CancelFunc // session id → running turn
 	scheduled sync.WaitGroup                // scheduled runs in progress
 	active    map[string]int                // project → turns, scheduled runs and syncs in progress
-	pending   map[string]bool               // project → recreate its container once it is idle (changed secrets)
 }
 
-// hold marks work in progress in a project, so a secrets change waits instead of restarting its
-// container underneath it. Call the returned func exactly once when the work ends.
+// hold marks work in progress in a project, so a deploy can wait for it instead of cutting it
+// off (GET /api/busy). Call the returned func exactly once when the work ends.
 func (a *app) hold(project string) (release func()) {
 	a.mu.Lock()
 	if a.active == nil {
@@ -66,14 +64,10 @@ func (a *app) hold(project string) (release func()) {
 		once.Do(func() {
 			a.mu.Lock()
 			a.active[project]--
-			apply := a.active[project] == 0 && a.pending[project]
 			if a.active[project] == 0 {
 				delete(a.active, project)
 			}
 			a.mu.Unlock()
-			if apply {
-				a.applyWhenIdle(context.Background(), project)
-			}
 		})
 	}
 }
@@ -119,9 +113,7 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("GET /api/projects/{project}/files", member, a.getFile)
 	handle("GET /api/projects/{project}/files/{path...}", member, a.getFile)
 	handle("POST /api/projects/{project}/view", member, a.viewLink)
-	handle("GET /api/projects/{project}/secrets", admin, a.listSecrets)
-	handle("PUT /api/projects/{project}/secrets/{name}", admin, a.setSecret)
-	handle("DELETE /api/projects/{project}/secrets/{name}", admin, a.deleteSecret)
+	handle("GET /api/busy", admin, a.busy)
 	handle("GET /api/projects/{project}/schedules", member, a.listSchedules)
 	handle("POST /api/projects/{project}/schedules", admin, a.createSchedule)
 	handle("PATCH /api/schedules/{schedule}", admin, a.updateSchedule)
@@ -330,9 +322,6 @@ func (a *app) deleteProject(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, fmt.Errorf("removing the project's container and volume: %w", err))
 		return
 	}
-	a.mu.Lock()
-	delete(a.pending, name)
-	a.mu.Unlock()
 	reply(w, map[string]bool{"ok": true}, a.store.DeleteProject(r.Context(), name))
 }
 
@@ -343,6 +332,19 @@ func (a *app) restartProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, map[string]bool{"ok": true}, a.runtime.Recreate(r.Context(), name))
+}
+
+// busy names the projects with work in progress — a turn, a scheduled run or a git sync. A deploy
+// script waits on it, because restarting a project's container cuts off whatever it is doing.
+func (a *app) busy(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	projects := make([]string, 0, len(a.active))
+	for project := range a.active {
+		projects = append(projects, project)
+	}
+	a.mu.Unlock()
+	sort.Strings(projects)
+	reply(w, map[string]any{"busy": projects}, nil)
 }
 
 func (a *app) listWorkers(w http.ResponseWriter, r *http.Request) {

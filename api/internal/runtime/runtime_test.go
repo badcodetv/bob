@@ -12,9 +12,8 @@ import (
 
 func TestSpecEnvironment(t *testing.T) {
 	m := &Manager{cfg: Config{DefaultImage: "bob-runtime:dev", PassEnv: map[string]string{"GITHUB_TOKEN": "shared", "FRED_API_KEY": "fred"}}}
-	spec := m.spec(store.Project{Name: "wolf", RepoURL: "https://github.com/x/wolf", RepoRef: "main"},
-		map[string]string{"GITHUB_TOKEN": "wolf-only", "BOB_REPO_URL": "https://evil.example/repo", "BOB_RUNTIME_TOKEN": "guess"})
-	want := []string{"BOB_REPO_REF=main", "BOB_REPO_SUBFOLDER=", "BOB_REPO_URL=https://github.com/x/wolf", "BOB_RUNTIME_TOKEN=" + Token(nil, "wolf"), "FRED_API_KEY=fred", "GITHUB_TOKEN=wolf-only"}
+	spec := m.spec(store.Project{Name: "wolf", RepoURL: "https://github.com/x/wolf", RepoRef: "main"})
+	want := []string{"BOB_REPO_REF=main", "BOB_REPO_SUBFOLDER=", "BOB_REPO_URL=https://github.com/x/wolf", "BOB_RUNTIME_TOKEN=" + Token(nil, "wolf"), "FRED_API_KEY=fred", "GITHUB_TOKEN=shared"}
 	if !slices.Equal(spec.Env, want) {
 		t.Errorf("env = %v, want %v", spec.Env, want)
 	}
@@ -26,7 +25,7 @@ func TestSpecEnvironment(t *testing.T) {
 func TestSpecFingerprint(t *testing.T) {
 	p := store.Project{Name: "wolf", RepoURL: "https://github.com/x/wolf", RepoRef: "main"}
 	base := Config{DefaultImage: "runtime:1", TokenKey: []byte("k"), PassEnv: map[string]string{"GITHUB_TOKEN": "a"}, Memory: 8 << 30, NanoCPUs: 4e9, PidsLimit: 2048}
-	label := func(c Config) string { return (&Manager{cfg: c}).spec(p, nil).Labels[SpecLabel] }
+	label := func(c Config) string { return (&Manager{cfg: c}).spec(p).Labels[SpecLabel] }
 	first := label(base)
 	if first == "" || first != label(base) {
 		t.Fatal("the fingerprint must be stable")
@@ -47,7 +46,7 @@ func TestSpecFingerprint(t *testing.T) {
 			t.Errorf("change %d did not change the fingerprint", i)
 		}
 	}
-	s := (&Manager{cfg: base}).spec(p, nil)
+	s := (&Manager{cfg: base}).spec(p)
 	if s.Memory != 8<<30 || s.NanoCPUs != 4e9 || s.PidsLimit != 2048 {
 		t.Errorf("limits not applied: %+v", s)
 	}
