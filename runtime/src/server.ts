@@ -38,6 +38,14 @@ if (!KEY || !NAME) {
   process.exit(1);
 }
 const TOKEN = runtimeToken(KEY, NAME);
+
+// Draining: a deploy stops this container, and a turn cut off half way is a chat that stops
+// mid-sentence and a scheduled run recorded as failed with no retry. On SIGTERM we stop accepting
+// turns and let the ones in flight finish. Compose's stop_grace_period must be longer than a turn
+// is expected to take, or Docker sends SIGKILL and the wait was pointless.
+let draining = false;
+let inFlight = 0;
+let onDrained: (() => void) | null = null;
 const PROJECT_DIR = process.env.BOB_PROJECT_DIR ?? '/project';
 const CONFIG_DIR = join(PROJECT_DIR, 'repo', process.env.BOB_REPO_SUBFOLDER ?? '');
 
@@ -52,9 +60,20 @@ createServer((req, res) => {
   });
 }).listen(PORT, () => console.log(`bob-runtime listening on :${PORT}, config ${CONFIG_DIR}`));
 
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    if (draining) return;
+    draining = true;
+    console.log(`${signal}: draining, ${inFlight} turn(s) in flight`);
+    if (inFlight === 0) process.exit(0);
+    onDrained = () => { console.log('drained'); process.exit(0); };
+  });
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse) {
   if (!checkAuth(req.headers.authorization, TOKEN)) return sendJSON(res, 401, { error: 'unauthorized' });
-  if (req.method === 'GET' && req.url === '/health') return sendJSON(res, 200, { ok: true });
+  // /health keeps answering while draining, but says so, so Bob can tell "stopping" from "broken".
+  if (req.method === 'GET' && req.url === '/health') return sendJSON(res, 200, { ok: true, draining });
   if (req.method === 'GET' && req.url === '/workers') return sendJSON(res, 200, await workers());
   if (req.method === 'POST' && req.url === '/sync') {
     // One sync at a time: concurrent fetches into one checkout fail on git's locks, and each caller
@@ -66,7 +85,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     syncing = result.catch(() => {});
     return sendJSON(res, 200, await result);
   }
-  if (req.method === 'POST' && req.url === '/turns') return turn(req, res);
+  if (req.method === 'POST' && req.url === '/turns') {
+    if (draining) return sendJSON(res, 503, { error: 'this project is stopping; try again once it is back' });
+    return turn(req, res);
+  }
   if (req.method === 'GET' && (req.url === '/files' || req.url?.startsWith('/files/') || req.url?.startsWith('/files?'))) return files(req, res);
   const del = /^\/sessions\/([\w-]+)$/.exec(req.url ?? '');
   if (req.method === 'DELETE' && del) {
@@ -122,6 +144,7 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
   res.writeHead(200, { 'content-type': 'application/x-ndjson' });
   const line = (v: unknown) => res.write(JSON.stringify(v) + '\n');
 
+  inFlight++;
   try {
     const result = await driver(worker, project, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd,
       userEmail: body.user_email, userName: body.user_name },
@@ -129,6 +152,8 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
     line({ done: true, harness_session_id: result.harnessSessionId, error: result.error });
   } catch (err) {
     line({ done: true, error: String((err as Error)?.message ?? err) });
+  } finally {
+    if (--inFlight === 0 && onDrained) onDrained();
   }
   res.end();
 }
