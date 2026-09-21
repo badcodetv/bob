@@ -1,10 +1,13 @@
 // bob is the API: projects, sessions, turns, and the stored record of every event.
 //
 //	BOB_DATABASE_URL   postgres connection string (required)
+//	BOB_PROJECTS_FILE  the projects Bob serves, YAML (required). Each also has a container
+//	                   declared in the same deploy's compose file; Bob never starts one.
 //	BOB_ADDR           listen address (default :8090)
-//	BOB_DOCKER_SOCKET  default /var/run/docker.sock
-//	BOB_RUNTIME_IMAGE  image for projects that name none (default bob-runtime:dev)
-//	BOB_DOCKER_NETWORK run project containers on this network (set when Bob itself is containerised)
+//	BOB_RUNTIME_KEY    derives each project's runtime password, and must match what the compose
+//	                   file passes that container as BOB_RUNTIME_TOKEN (required)
+//	BOB_RUNTIME_HOSTS  local development only: project=host:port,… when Bob runs on the host and
+//	                   cannot resolve container names
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
 //	BOB_SESSION_SECRET signs session cookies (required)
 //	BOB_PROJECT_MAP    who may sign in and which projects they use (required), JSON:
@@ -12,11 +15,6 @@
 //	BOB_PROJECT_MAP_FILE the same map read from a file (BOB_PROJECT_MAP wins)
 //	BOB_ALLOWED_EMAILS deprecated: comma-separated emails, each an admin, when no map is set
 //	BOB_WEB_DIR        serve the built web app from here (optional; dev uses Vite)
-//	BOB_PASS_ENV       comma-separated variables copied into project containers,
-//	                   e.g. CLAUDE_CODE_OAUTH_TOKEN,ANTHROPIC_API_KEY,GITHUB_TOKEN
-//	BOB_PROJECT_MEMORY memory limit per project container, e.g. 8g (default: none)
-//	BOB_PROJECT_CPUS   CPU limit per project container, e.g. 4 (default: none)
-//	BOB_PROJECT_PIDS   process limit per project container (default 4096)
 package main
 
 import (
@@ -26,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -34,7 +31,7 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
-	"github.com/badcodetv/bob/internal/docker"
+	"github.com/badcodetv/bob/internal/projects"
 	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
 )
@@ -53,6 +50,24 @@ func main() {
 	}
 	defer st.Close()
 
+	projectsFile := os.Getenv("BOB_PROJECTS_FILE")
+	if projectsFile == "" {
+		log.Fatal("BOB_PROJECTS_FILE is required: the projects Bob serves")
+	}
+	list, err := projects.Load(projectsFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := st.ReconcileProjects(ctx, list); err != nil {
+		log.Fatalf("reconciling %s: %v", projectsFile, err)
+	}
+	if absent, err := st.AbsentProjects(ctx); err != nil {
+		log.Fatal(err)
+	} else if len(absent) > 0 {
+		log.Printf("not serving projects missing from %s (their chats and schedules are kept, and paused): %s",
+			projectsFile, strings.Join(absent, ", "))
+	}
+
 	people, deprecated, err := access.Load(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
@@ -65,55 +80,26 @@ func main() {
 		log.Fatal("GOOGLE_CLIENT_ID and BOB_SESSION_SECRET (16+ chars) are required")
 	}
 
-	pass := map[string]string{}
-	for _, k := range strings.Split(os.Getenv("BOB_PASS_ENV"), ",") {
-		if k = strings.TrimSpace(k); k != "" {
-			if v, ok := os.LookupEnv(k); ok {
-				pass[k] = v
-			}
-		}
+	runtimeKey := []byte(os.Getenv("BOB_RUNTIME_KEY"))
+	if len(runtimeKey) < 16 {
+		log.Fatal("BOB_RUNTIME_KEY (16+ chars) is required: it derives each project container's password")
 	}
-	memory, err := parseBytes(os.Getenv("BOB_PROJECT_MEMORY"))
+	hosts, err := parseHosts(os.Getenv("BOB_RUNTIME_HOSTS"))
 	if err != nil {
-		log.Fatalf("BOB_PROJECT_MEMORY: %v", err)
-	}
-	cpus, err := strconv.ParseFloat(env("BOB_PROJECT_CPUS", "0"), 64)
-	if err != nil || cpus < 0 {
-		log.Fatalf("BOB_PROJECT_CPUS: not a number of CPUs: %q", os.Getenv("BOB_PROJECT_CPUS"))
-	}
-	pids, err := strconv.ParseInt(env("BOB_PROJECT_PIDS", "4096"), 10, 64)
-	if err != nil || pids < 0 {
-		log.Fatalf("BOB_PROJECT_PIDS: not a number: %q", os.Getenv("BOB_PROJECT_PIDS"))
+		log.Fatalf("BOB_RUNTIME_HOSTS: %v", err)
 	}
 
 	app := &app{
-		auth:   signIn,
-		access: people,
-		webDir: os.Getenv("BOB_WEB_DIR"),
-		store:  st,
-		broker: broker.New(),
-		runtime: runtime.NewManager(docker.New(env("BOB_DOCKER_SOCKET", "/var/run/docker.sock")), runtime.Config{
-			DefaultImage: env("BOB_RUNTIME_IMAGE", "bob-runtime:dev"),
-			Network:      os.Getenv("BOB_DOCKER_NETWORK"),
-			PassEnv:      pass,
-			TokenKey:     signIn.Secret,
-			Memory:       memory,
-			NanoCPUs:     int64(cpus * 1e9),
-			PidsLimit:    pids,
-		}),
-		turns: map[string]context.CancelFunc{},
-		now:   time.Now,
+		auth:    signIn,
+		access:  people,
+		webDir:  os.Getenv("BOB_WEB_DIR"),
+		store:   st,
+		broker:  broker.New(),
+		runtime: runtime.NewManager(runtime.Config{Hosts: hosts, TokenKey: runtimeKey}),
+		turns:   map[string]context.CancelFunc{},
+		now:     time.Now,
 	}
 	app.projectOf = app.storeProjectOf
-	// Before any turn can run: containers made with an older image, token or limits are replaced
-	// on their next use.
-	if projects, err := st.Projects(ctx); err != nil {
-		log.Fatal(err)
-	} else if replaced, err := app.runtime.(*runtime.Manager).ReplaceStale(ctx, projects); err != nil {
-		log.Printf("checking project containers: %v", err)
-	} else if len(replaced) > 0 {
-		log.Printf("replaced project containers with changed settings: %s", strings.Join(replaced, ", "))
-	}
 	go app.scheduleLoop(ctx)
 
 	srv := &http.Server{Addr: env("BOB_ADDR", ":8090"), Handler: app.routes()}
@@ -123,35 +109,26 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	log.Printf("bob listening on %s (passing %d env vars to projects)", srv.Addr, len(pass))
+	log.Printf("bob listening on %s, serving %d projects from %s", srv.Addr, len(list), projectsFile)
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
 
-// parseBytes reads a size such as 512m or 8g ("" is 0, no limit).
-func parseBytes(s string) (int64, error) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "" {
-		return 0, nil
+// parseHosts reads "project=host:port,other=host:port" (BOB_RUNTIME_HOSTS).
+func parseHosts(s string) (map[string]string, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
 	}
-	mult := int64(1)
-	switch s[len(s)-1] {
-	case 'k':
-		mult = 1 << 10
-	case 'm':
-		mult = 1 << 20
-	case 'g':
-		mult = 1 << 30
+	out := map[string]string{}
+	for _, pair := range strings.Split(s, ",") {
+		project, host, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || project == "" || host == "" {
+			return nil, fmt.Errorf("want project=host:port, got %q", pair)
+		}
+		out[project] = host
 	}
-	if mult > 1 {
-		s = s[:len(s)-1]
-	}
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || n < 0 {
-		return 0, fmt.Errorf("not a size like 512m or 8g: %q", s)
-	}
-	return n * mult, nil
+	return out, nil
 }
 
 func env(k, def string) string {

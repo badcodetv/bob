@@ -1,4 +1,8 @@
-// Package runtime starts project containers and talks to the runtime server inside them.
+// Package runtime talks to the runtime server inside each project's container.
+//
+// Bob does not start containers. Each project has one declared in the same deploy's compose file,
+// always running, reached by its name on the Docker network — so Bob needs no Docker socket, and
+// nothing in this package speaks to Docker.
 package runtime
 
 import (
@@ -9,203 +13,64 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/badcodetv/bob/internal/docker"
 	"github.com/badcodetv/bob/internal/store"
 )
 
 const containerPort = 8080
 
 type Config struct {
-	DefaultImage string
-	// Network, when set, puts project containers on this Docker network and reaches them by
-	// container name (Bob's API runs in a container on the same network). When empty, the
-	// runtime port is published on 127.0.0.1 (Bob's API runs on the host).
-	Network string
-	// PassEnv lists variables copied from Bob's own environment into every project container.
-	PassEnv map[string]string
+	// Hosts overrides where a project's runtime server is, by project name. Local development
+	// sets it, because a Bob running on the host cannot resolve container names.
+	Hosts map[string]string
 	// TokenKey derives each project's runtime token (see Token). Required.
 	TokenKey []byte
-	// Limits for every project container; zero means none.
-	Memory    int64 // bytes
-	NanoCPUs  int64
-	PidsLimit int64
+	// Wait is how long Ensure waits for a project's runtime server to answer. Zero means 30s.
+	Wait time.Duration
 }
 
 // Token is the password a project's runtime server requires on every request, so an agent in
-// another project's container cannot drive this one over the Docker network. Bob passes it to the
-// container as BOB_RUNTIME_TOKEN and puts it in the base URL, from which Go's HTTP client sends it
-// as basic auth (and leaves it out of error messages).
+// another project's container cannot drive this one over the Docker network. The compose file
+// passes it to the container as BOB_RUNTIME_TOKEN; Bob derives the same value and puts it in the
+// base URL, from which Go's HTTP client sends it as basic auth (and leaves it out of error
+// messages). Bob and the compose generator must use the same BOB_RUNTIME_KEY.
 func Token(key []byte, project string) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("bob-runtime\x00" + project))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-type Manager struct {
-	docker *docker.Client
-	cfg    Config
-	mu     sync.Mutex // serialises container creation per Bob process
-	// destroyed names projects whose container and volume were removed: Ensure refuses them, so a
-	// request that was already on its way cannot bring the container back (with the project's
-	// secrets) after the project is deleted. Revive clears the mark for a re-created project.
-	destroyed map[string]bool
-}
+type Manager struct{ cfg Config }
 
-// Revive allows a container again for a project name that was destroyed and has been created anew.
-func (m *Manager) Revive(project string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.destroyed, project)
-}
+func NewManager(cfg Config) *Manager { return &Manager{cfg: cfg} }
 
-func NewManager(d *docker.Client, cfg Config) *Manager { return &Manager{docker: d, cfg: cfg} }
-
+// ContainerName is what a project's container is called in the compose file. It is also its
+// hostname on Bob's network, and the name of its volume — so a project's name can never change.
 func ContainerName(project string) string { return "bob-project-" + project }
 
-// VolumeName is the project's volume: its repository checkout, chat worktrees and harness state.
-func VolumeName(project string) string { return "bob-project-" + project }
-
-// Ensure returns the base URL of the project's runtime server, creating and starting the
-// container if needed, and waiting until it answers /health.
+// Ensure returns the base URL of the project's runtime server, once it answers /health. It cannot
+// start anything: a container that is not running is a deploy problem, and says so.
 func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.destroyed[p.Name] {
-		return "", fmt.Errorf("project %s has been deleted", p.Name)
-	}
-	name := ContainerName(p.Name)
-	st, err := m.docker.Inspect(ctx, name)
-	if errors.Is(err, docker.ErrNotFound) {
-		id, cerr := m.docker.Create(ctx, m.spec(p))
-		if cerr != nil {
-			return "", cerr
-		}
-		st = docker.ContainerState{ID: id}
-	} else if err != nil {
-		return "", err
-	}
-	if !st.Running {
-		if err := m.docker.Start(ctx, st.ID); err != nil {
-			return "", err
-		}
-		if st, err = m.docker.Inspect(ctx, name); err != nil {
-			return "", err
-		}
-	}
-	host := fmt.Sprintf("%s:%d", name, containerPort)
-	if m.cfg.Network == "" {
-		host = "127.0.0.1:" + st.LoopbackPort
+	host, ok := m.cfg.Hosts[p.Name]
+	if !ok {
+		host = fmt.Sprintf("%s:%d", ContainerName(p.Name), containerPort)
 	}
 	base := (&url.URL{Scheme: "http", User: url.UserPassword("bob", Token(m.cfg.TokenKey, p.Name)), Host: host}).String()
-	return base, waitHealthy(ctx, base)
+	return base, m.waitHealthy(ctx, p.Name, base)
 }
 
-// SpecLabel is the container label holding a fingerprint of everything Bob configured it with.
-const SpecLabel = "bob.spec"
-
-// ReplaceStale removes each project container whose configuration no longer matches what Bob
-// would create now — a new runtime image, a changed pass-through variable (a rotated token), new
-// limits — so the next turn starts a fresh one on the same volume. Call it at startup, before
-// any turn runs: removing a container stops whatever it is doing.
-func (m *Manager) ReplaceStale(ctx context.Context, projects []store.Project) (replaced []string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, p := range projects {
-		st, err := m.docker.Inspect(ctx, ContainerName(p.Name))
-		if errors.Is(err, docker.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return replaced, err
-		}
-		if st.Labels[SpecLabel] == m.spec(p).Labels[SpecLabel] {
-			continue
-		}
-		if err := m.docker.Remove(ctx, ContainerName(p.Name)); err != nil {
-			return replaced, err
-		}
-		replaced = append(replaced, p.Name)
+func (m *Manager) waitHealthy(ctx context.Context, project, base string) error {
+	wait := m.cfg.Wait
+	if wait == 0 {
+		wait = 30 * time.Second
 	}
-	return replaced, nil
-}
-
-// Recreate removes the project's container (keeping its volume) so the next Ensure picks up
-// changed settings.
-func (m *Manager) Recreate(ctx context.Context, project string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.docker.Remove(ctx, ContainerName(project))
-}
-
-// Destroy removes the project's container and its volume. Nothing of the project is left in Docker.
-func (m *Manager) Destroy(ctx context.Context, project string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.destroyed == nil {
-		m.destroyed = map[string]bool{}
-	}
-	m.destroyed[project] = true
-	if err := m.docker.Remove(ctx, ContainerName(project)); err != nil {
-		return err
-	}
-	return m.docker.RemoveVolume(ctx, VolumeName(project))
-}
-
-func (m *Manager) spec(p store.Project) docker.ContainerSpec {
-	image := p.Image
-	if image == "" {
-		image = m.cfg.DefaultImage
-	}
-	vars := map[string]string{}
-	for k, v := range m.cfg.PassEnv {
-		vars[k] = v
-	}
-	vars["BOB_REPO_URL"], vars["BOB_REPO_REF"], vars["BOB_REPO_SUBFOLDER"] = p.RepoURL, p.RepoRef, p.Subfolder
-	vars["BOB_RUNTIME_TOKEN"] = Token(m.cfg.TokenKey, p.Name)
-	env := make([]string, 0, len(vars))
-	for k, v := range vars {
-		env = append(env, k+"="+v)
-	}
-	sort.Strings(env)
-	binds := []string{VolumeName(p.Name) + ":/project"}
-	if p.RepoMount != "" {
-		binds = append(binds, p.RepoMount+":/seed:ro")
-	}
-	s := docker.ContainerSpec{
-		Name:            ContainerName(p.Name),
-		Image:           image,
-		Env:             env,
-		Labels:          map[string]string{"bob.project": p.Name},
-		Binds:           binds,
-		Network:         m.cfg.Network,
-		PublishLoopback: m.cfg.Network == "",
-		Port:            containerPort,
-		Memory:          m.cfg.Memory,
-		NanoCPUs:        m.cfg.NanoCPUs,
-		PidsLimit:       m.cfg.PidsLimit,
-	}
-	// A keyed hash, not a plain one: the environment holds credentials, and labels are readable
-	// by anyone who can list containers.
-	canonical, _ := json.Marshal(s)
-	mac := hmac.New(sha256.New, m.cfg.TokenKey)
-	mac.Write([]byte("bob-spec\x00"))
-	mac.Write(canonical)
-	s.Labels[SpecLabel] = hex.EncodeToString(mac.Sum(nil))
-	return s
-}
-
-func waitHealthy(ctx context.Context, base string) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	var last error
 	for {
@@ -221,7 +86,8 @@ func waitHealthy(ctx context.Context, base string) error {
 		last = err
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("project runtime never became healthy: %w", last)
+			return fmt.Errorf("project %s is not answering: its container (%s) is not running, or not on Bob's network — check the deploy: %w",
+				project, ContainerName(project), last)
 		case <-time.After(300 * time.Millisecond):
 		}
 	}

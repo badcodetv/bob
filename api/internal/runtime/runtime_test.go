@@ -2,75 +2,59 @@ package runtime
 
 import (
 	"context"
-	"net/url"
-	"slices"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/badcodetv/bob/internal/store"
 )
 
-func TestSpecEnvironment(t *testing.T) {
-	m := &Manager{cfg: Config{DefaultImage: "bob-runtime:dev", PassEnv: map[string]string{"GITHUB_TOKEN": "shared", "FRED_API_KEY": "fred"}}}
-	spec := m.spec(store.Project{Name: "wolf", RepoURL: "https://github.com/x/wolf", RepoRef: "main"})
-	want := []string{"BOB_REPO_REF=main", "BOB_REPO_SUBFOLDER=", "BOB_REPO_URL=https://github.com/x/wolf", "BOB_RUNTIME_TOKEN=" + Token(nil, "wolf"), "FRED_API_KEY=fred", "GITHUB_TOKEN=shared"}
-	if !slices.Equal(spec.Env, want) {
-		t.Errorf("env = %v, want %v", spec.Env, want)
+// TestEnsureReachesTheProjectsContainer checks Bob addresses a project by its container name,
+// sends the project's own token, and waits for health rather than assuming.
+func TestEnsureReachesTheProjectsContainer(t *testing.T) {
+	var asked, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Path
+		user, pass, _ := r.BasicAuth()
+		auth = user + ":" + pass
+	}))
+	t.Cleanup(srv.Close)
+
+	m := NewManager(Config{TokenKey: []byte("key"), Hosts: map[string]string{"wolf": strings.TrimPrefix(srv.URL, "http://")}})
+	base, err := m.Ensure(t.Context(), store.Project{Name: "wolf"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if spec.Image != "bob-runtime:dev" || spec.Name != "bob-project-wolf" {
-		t.Errorf("spec: %+v", spec)
+	if asked != "/health" {
+		t.Errorf("asked for %q, want /health", asked)
+	}
+	if want := "bob:" + Token([]byte("key"), "wolf"); auth != want {
+		t.Errorf("auth = %q, want %q", auth, want)
+	}
+	if !strings.Contains(base, Token([]byte("key"), "wolf")) {
+		t.Error("the base URL should carry the project's token")
 	}
 }
 
-func TestSpecFingerprint(t *testing.T) {
-	p := store.Project{Name: "wolf", RepoURL: "https://github.com/x/wolf", RepoRef: "main"}
-	base := Config{DefaultImage: "runtime:1", TokenKey: []byte("k"), PassEnv: map[string]string{"GITHUB_TOKEN": "a"}, Memory: 8 << 30, NanoCPUs: 4e9, PidsLimit: 2048}
-	label := func(c Config) string { return (&Manager{cfg: c}).spec(p).Labels[SpecLabel] }
-	first := label(base)
-	if first == "" || first != label(base) {
-		t.Fatal("the fingerprint must be stable")
-	}
-	if len(first) != 64 {
-		t.Errorf("unexpected label %q", first)
-	}
-	changed := []func(c *Config){
-		func(c *Config) { c.DefaultImage = "runtime:2" },
-		func(c *Config) { c.PassEnv = map[string]string{"GITHUB_TOKEN": "rotated"} },
-		func(c *Config) { c.Memory = 4 << 30 },
-		func(c *Config) { c.TokenKey = []byte("other") },
-	}
-	for i, change := range changed {
-		c := base
-		change(&c)
-		if label(c) == first {
-			t.Errorf("change %d did not change the fingerprint", i)
-		}
-	}
-	s := (&Manager{cfg: base}).spec(p)
-	if s.Memory != 8<<30 || s.NanoCPUs != 4e9 || s.PidsLimit != 2048 {
-		t.Errorf("limits not applied: %+v", s)
+// A container that is not running is a deploy problem, and the error must say so — Bob has no
+// socket and cannot start anything.
+func TestEnsureSaysWhichContainerIsMissing(t *testing.T) {
+	m := NewManager(Config{TokenKey: []byte("key"), Wait: 50 * time.Millisecond,
+		Hosts: map[string]string{"wolf": "127.0.0.1:1"}})
+	_, err := m.Ensure(context.Background(), store.Project{Name: "wolf"})
+	if err == nil || !strings.Contains(err.Error(), "bob-project-wolf") {
+		t.Errorf("err = %v, want it to name the container", err)
 	}
 }
 
-func TestTokenAndErrors(t *testing.T) {
-	a, b := Token([]byte("k"), "wolf"), Token([]byte("k"), "enc")
-	if a == b || a == Token([]byte("other"), "wolf") || len(a) != 64 {
-		t.Errorf("tokens must differ by project and key: %s %s", a, b)
+// Each project's token differs, so an agent in one container cannot drive another's runtime.
+func TestTokenIsPerProject(t *testing.T) {
+	if Token([]byte("key"), "wolf") == Token([]byte("key"), "demo") {
+		t.Error("two projects share a token")
 	}
-	base := (&url.URL{Scheme: "http", User: url.UserPassword("bob", a), Host: "127.0.0.1:1"}).String()
-	_, err := Workers(context.Background(), base, false)
-	if err == nil || strings.Contains(err.Error(), a) {
-		t.Errorf("an error must not show the token: %v", err)
-	}
-}
-
-func TestDestroyedProjectsStayDown(t *testing.T) {
-	m := &Manager{destroyed: map[string]bool{"wolf": true}}
-	if _, err := m.Ensure(context.Background(), store.Project{Name: "wolf"}); err == nil || !strings.Contains(err.Error(), "deleted") {
-		t.Fatalf("Ensure after Destroy: %v", err)
-	}
-	m.Revive("wolf")
-	if m.destroyed["wolf"] {
-		t.Error("Revive did not clear the mark")
+	if Token([]byte("a"), "wolf") == Token([]byte("b"), "wolf") {
+		t.Error("the key does not change the token")
 	}
 }
