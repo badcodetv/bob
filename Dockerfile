@@ -13,11 +13,11 @@ RUN go mod download
 COPY api ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /bob ./cmd/bob
 
-FROM gcr.io/distroless/static-debian12
+# nonroot: Bob serves HTTP and talks to Postgres and the project containers. It has no Docker
+# socket to reach — each project's container is declared in the compose file, not started here.
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=api /bob /bob
 COPY --from=web /web/dist /web
 ENV BOB_WEB_DIR=/web BOB_ADDR=:8090
 EXPOSE 8090
-# Root in the container: Bob talks to the host Docker socket, which is root-owned.
-USER 0
 ENTRYPOINT ["/bob"]
