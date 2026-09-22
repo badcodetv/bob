@@ -5,7 +5,7 @@
 #   ./stack build          build the runtime image and install the web app's packages
 #   ./stack start          Postgres, a container per project, the API on :8090, the web app on :8080
 #     [--attach]             ... and follow the logs here instead of returning
-#   ./stack stop           stop the API, the web app and Postgres (data is kept)
+#   ./stack stop           stop the API and the web app (Postgres is shared — it stays up)
 #   ./stack restart        stop, then start
 #   ./stack status         what is running, which projects exist, schedules on or off
 #   ./stack logs [api|web|postgres]   follow a log (default: api and web together)
@@ -16,8 +16,14 @@
 #   ./stack clean          remove every project container and volume (asks first)
 #
 # Deliberately small. The API and the web app run on the host — Go and Vite both
-# rebuild faster there. Postgres and one container per project run in Compose:
-# Bob does not start containers, it only talks to them.
+# rebuild faster there. One container per project runs in Compose: Bob does not
+# start containers, it only talks to them.
+#
+# Postgres is NOT Bob's. It is the one shared local Postgres in the ops repository
+# (ops/apps/postgres), built from the same Dockerfile as the box, so a laptop runs
+# PostgreSQL 18.6 with production's extensions and tuning. Every project gets its
+# own database and role there, exactly as on the box. Set OPS_DIR if ops is not at
+# ~/projects/badcode/ops.
 #
 # The projects are projects.dev.yaml, from which scripts/compose-projects.mjs
 # generates .stack/projects.yml. A project there publishes its runtime port on
@@ -63,14 +69,17 @@ projects_up() {
   docker compose --env-file ./.env -f "$PROJECTS_YML" up -d >/dev/null
 }
 
-postgres_up() {
-  docker compose up -d postgres >/dev/null
-  for _ in $(seq 1 60); do
-    docker compose exec -T postgres pg_isready -q -U bob && return 0
-    sleep 1
-  done
-  die "Postgres did not come up: ./stack logs postgres"
+# The one shared local Postgres lives in the ops repository, because it is shared by every
+# project rather than owned by this one — the same reason it is its own app on the box. It is
+# built from the box's Dockerfile, so local is PostgreSQL 18.6 with production's extensions.
+OPS="${OPS_DIR:-$HOME/projects/badcode/ops}"
+PG="$OPS/apps/postgres"
+pg() {
+  [ -x "$PG/dev" ] || die "no shared Postgres at $PG.
+   It lives in the ops repository. Clone it beside this one, or set OPS_DIR=/path/to/ops."
+  "$PG/dev" "$@"
 }
+postgres_up() { pg up >/dev/null || die "Postgres did not come up: ./stack logs postgres"; }
 
 case "${1:-}" in
 
@@ -131,8 +140,9 @@ stop)
     fi
     rm -f "$pidfile"
   done
-  say "Postgres"
-  docker compose stop postgres >/dev/null 2>&1 || true
+  # The shared Postgres is deliberately NOT stopped: other projects use it, and stopping it here
+  # would break them. Stop it on purpose with ops/apps/postgres/dev down.
+  say "Postgres left running (it is shared — ops/apps/postgres/dev down stops it)"
   say "stopped. Project containers keep running; ./stack containers lists them."
   say "(never run 'docker compose down -v' here: -v deletes volumes, and a project's volume is its chats' worktrees.)"
   ;;
@@ -145,7 +155,11 @@ restart)
 status)
   running "$API_PID" && say "API: running (pid $(cat "$API_PID"))" || say "API: stopped"
   running "$WEB_PID" && say "web app: running (pid $(cat "$WEB_PID"))" || say "web app: stopped"
-  docker compose ps --format '── Postgres: {{.State}}' postgres 2>/dev/null | head -1
+  if pg status >/dev/null 2>&1; then
+    say "Postgres: running (shared, $PG)"
+  else
+    say "Postgres: stopped"
+  fi
   if curl -sf "$API_URL/healthz" >/dev/null 2>&1; then
     "$0" sql "select name, repo_url, coalesce(absent_at::text, 'served') from projects order by name" 2>/dev/null | sed 's/^/   project: /'
     "$0" sql "select value from settings where key = 'schedules_paused'" 2>/dev/null \
@@ -157,7 +171,7 @@ status)
 logs)
   shift || true
   case "${1:-}" in
-    postgres) exec docker compose logs -f postgres ;;
+    postgres) exec docker compose -f "$PG/compose.local.yml" logs -f postgres ;;
     api) exec tail -f "$API_LOG" ;;
     web) exec tail -f "$WEB_LOG" ;;
     *) exec tail -f "$API_LOG" "$WEB_LOG" ;;
@@ -166,19 +180,22 @@ logs)
 
 psql)
   shift || true
-  exec docker compose exec postgres psql -U bob -d bob "$@"
+  exec "$PG/dev" psql bob "$@"
   ;;
 
 sql)
   [ $# -ge 2 ] || die 'usage: ./stack sql "SELECT …"'
-  exec docker compose exec -T postgres psql -U bob -d bob -At -c "$2"
+  exec docker compose -f "$PG/compose.local.yml" exec -T -e PGPASSWORD=local postgres \
+    psql -U app_bob -d bob -At -c "$2"
   ;;
 
 test)
   need_env
   postgres_up
-  say "Go (throwaway databases on the local Postgres)"
-  (cd api && BOB_TEST_DATABASE_URL=postgres://bob:bob@127.0.0.1:5433/bob?sslmode=disable go test ./...)
+  # The superuser, not app_bob: these tests create a throwaway database each, and app_bob
+  # deliberately cannot (one database per app is the rule production enforces).
+  say "Go (throwaway databases on the shared local Postgres)"
+  (cd api && BOB_TEST_DATABASE_URL=postgres://postgres:local@127.0.0.1:5432/postgres?sslmode=disable go test ./...)
   say "runtime"
   (cd runtime && npm test --silent)
   say "web typecheck"

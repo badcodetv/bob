@@ -1,12 +1,17 @@
-# Local development: Postgres only. Run the API on the host (see README).
-services:
-  postgres:
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_USER: bob
-      POSTGRES_PASSWORD: bob
-      POSTGRES_DB: bob
-    ports: ["127.0.0.1:5433:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
-volumes:
-  pgdata:
+# Local development has no Postgres of its own any more.
+#
+# It uses the ONE shared local Postgres in the ops repository — ops/apps/postgres — which is built
+# from the same Dockerfile as the box, so a laptop runs PostgreSQL 18.6 with the same extensions
+# and the same work_mem semantics as production. `./stack start` starts it for you.
+#
+# It used to run pgvector/pgvector:pg17 here: a major version behind the box, without production's
+# tuning, and carrying the one extension Bob does not use. Testing against a Postgres that
+# production is not cannot find a Postgres problem.
+#
+#   ops/apps/postgres/dev up            start it
+#   ops/apps/postgres/dev new <app>     give another project its own database and role
+#   ops/apps/postgres/dev psql bob      a shell
+#
+# This file is kept so `docker compose` in this directory is not a surprise, and because the
+# project containers are generated into .stack/projects.yml rather than declared here.
+services: {}

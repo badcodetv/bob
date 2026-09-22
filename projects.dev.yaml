@@ -13,6 +13,14 @@ projects:
     repo: https://github.com/badcodetv/bob
     ref: main
     config_dir: examples/config
+  # Wolf, exactly as the box runs it (ops/apps/bob/projects.yaml) — same repo, same ref, same
+  # config folder, same three credentials. A local Wolf pushes to the real badcodetv/wolf, so
+  # treat it as live: it is the same repository the 06:00 UTC schedule writes to.
+  - name: wolf
+    repo: https://github.com/badcodetv/wolf
+    ref: main
+    config_dir: bob
+    pass: [CLAUDE_CODE_OAUTH_TOKEN, GITHUB_TOKEN, FRED_API_KEY]
   # This very checkout, mounted read-only at /seed, so a change to examples/config is picked up
   # by pressing Sync git — no push needed.
   - name: local
