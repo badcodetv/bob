@@ -2,4 +2,11 @@ node_modules
 dist
 /bob
 .env
+# Anything derived from it too. This repository is PUBLIC (badcodetv/bob, MIT), so a stray
+# .env.bak or .env.local would be published, and git cannot forget.
+.env.*
+!.env.example
+*.key
+*.pem
+*-key.json
 .stack/
