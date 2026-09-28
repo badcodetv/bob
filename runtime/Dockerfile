@@ -14,6 +14,8 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json entrypoint.sh ./
+# The Codex CLI the SDK bundles, on the PATH for `docker exec … codex login --device-auth`.
+RUN ln -s /app/node_modules/.bin/codex /usr/local/bin/codex
 # Git reaches github.com with GITHUB_TOKEN from the environment, read at the moment git asks.
 # The token is never written to a file — not here, not on the project volume.
 RUN git config --system credential.https://github.com.helper \

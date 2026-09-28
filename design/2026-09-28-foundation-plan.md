@@ -906,7 +906,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `/versions` shows exactly one version, `action: "create"`, `changed_by:
   "kaiyadavenport@gmail.com"`, `why: "test of worker_create"`.
 
-### T11: Codex driver in the runtime   [Status: pending | Model: opus]
+### T11: Codex driver in the runtime   [Status: in progress — code committed; live check waits on Kai's codex login | Model: opus]
 - **Scope:** Add `@openai/codex-sdk` to `runtime/package.json`. In `runtime/Dockerfile` put the
   bundled CLI on the PATH: `RUN ln -s /app/node_modules/.bin/codex /usr/local/bin/codex`.
   **First verify** against the installed SDK's types and Codex docs, recording each answer in
@@ -933,7 +933,42 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   version; Kai runs `docker exec -it bob-project-dev codex login --device-auth`; T12's manual check.
 - **Depends on:** T9
 - [ ] done
-- Notes:
+- Notes: (executor) SDK verification against `@openai/codex-sdk` 0.158.0 (`dist/index.d.ts`,
+  `dist/index.js`, README) and the bundled `codex-cli 0.158.0` (`--help`, and probes in a throwaway
+  `CODEX_HOME`): **(a)** yes — `new Codex({ config })`; the SDK flattens the object to dotted
+  `--config key=<TOML>` flags on `codex exec` (per run; nothing is written to `config.toml`).
+  **(b)** yes — `developer_instructions` is a top-level config key (`codex exec --strict-config`
+  accepts it and rejects a made-up key). **(c)** yes — `mcp_servers.bob.url` +
+  `mcp_servers.bob.http_headers.Authorization` (`codex mcp get bob --json` with those overrides
+  shows `transport: streamable_http` with the header); `features.rmcp_client` is **not** needed and
+  no longer exists (not in `codex features list`). **(d)** both exist: thread option
+  `webSearchMode: 'live'` (→ `--config web_search="live"`) or `webSearchEnabled: true` (same);
+  used `webSearchMode: 'live'`. **(e)** all six are `ThreadOptions` exactly as named;
+  `sandboxMode` → `--sandbox`, `approvalPolicy` → `--config approval_policy=…`,
+  `modelReasoningEffort` → `--config model_reasoning_effort=…` (SDK type: `minimal | low | medium |
+  high | xhigh | max | ultra | persistent`). **(f)** confirmed — with `env` set the SDK copies only
+  it (plus its own `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`), so the driver passes
+  `{...process.env (defined keys), ...turnEnv(turn)}`. Also: `resumeThread(id, options)` runs
+  `codex exec … resume <id>` with the same thread options, and the SDK finds the CLI through its own
+  `node_modules` resolution (not `PATH`), so the Dockerfile symlink is only for `docker exec`.
+  Implementation: `runtime/src/codex.ts` `runCodexTurn(turn, apiUrl, emit, signal, deps?)` — same
+  shape as `runClaudeTurn` (the `apiUrl` argument is what `server.ts`'s `Driver` passes); `deps`
+  injects a fake client, the codex home and the project name for tests. Empty `system_prompt` →
+  no `developer_instructions`. `server.ts` registers `codex: runCodexTurn`; Dockerfile symlinks
+  `/usr/local/bin/codex`. TDD (`runtime/src/codex.test.ts`, 5 tests, failing first against a stub):
+  missing `auth.json` → the exact message with the project name and the client is never built;
+  events passed through unchanged + thread id from `thread.started` + config/env/thread options;
+  `resume` → `resumeThread`; `turn.failed` → error while a recovered retry notice is not; a stream
+  ending in `error` or a dying CLI fails the turn but keeps the thread id. Validation: runtime
+  build + `npm test` → 15 pass; `./stack test` → all green; after `./stack build && ./stack
+  restart`, `docker exec bob-project-dev codex --version` → `codex-cli 0.158.0`;
+  `/project/.bob/codex` is on the `bob-project-dev` volume (mounted at `/project`), owned
+  `node:node` (uid 1000, the container user); a plain codex chat on `dev` (minted cookie, program
+  deleted) sent "say hi" → events `bob.user_message, bob.turn_failed` with
+  `{"error":"Codex is not logged in for this project. On the box run: docker exec -it
+  bob-project-dev codex login --device-auth"}`. Stopped there: Kai runs
+  `docker exec -it bob-project-dev codex login --device-auth`; the resume/streaming acceptance
+  criteria are checked by T12's manual check after that.
 
 ### T12: Codex in the API and the web   [Status: pending | Model: sonnet]
 - **Scope:** `api/internal/engines/engines.go`: for `codex`, `kind` = event `type`; ephemeral when
@@ -1368,3 +1403,14 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   on their `bob.user_message` (`schedules.go` → `startTurn`), so no special case was needed. A
   chat with no message yet gives `User: ""` (cannot happen in practice: a turn records its message
   before it runs).
+- **T11:** Codex's `error` event is not always fatal: `codex exec` emits
+  `{"type":"error","message":"Reconnecting... 1/5"}` while it retries, then may complete. The driver
+  keeps the last `error` message but clears it on `turn.completed`; `turn.failed` always fails the
+  turn. (The ticket said `error` → `TurnResult.error` outright.) T12's `codexMessages` should show
+  such notices as transient, not as the turn's failure.
+- **T11:** the SDK passes config as `--config` argv, so the chat's MCP token is on the `codex`
+  process's command line (visible to `ps` inside that container). That is the same exposure
+  Decision 5 accepts (the agent can read its own chat's token). Codex also supports
+  `bearer_token_env_var` if that is ever preferred.
+- **T11:** the SDK's `ModelReasoningEffort` also allows `max`, `ultra` and `persistent` beyond the
+  API's `codexEfforts` (`minimal…xhigh`); left as is — T12 may want to revisit the list.

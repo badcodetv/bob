@@ -19,6 +19,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { pipeline } from 'node:stream';
 import { join } from 'node:path';
 import { runClaudeTurn } from './claude.js';
+import { runCodexTurn } from './codex.js';
 import { listDir, openFile, resolveRepoPath } from './files.js';
 import { checkAuth } from './auth.js';
 import { parseTurn, type Turn, type TurnResult } from './turn.js';
@@ -45,7 +46,7 @@ const PROJECT_DIR = process.env.BOB_PROJECT_DIR ?? '/project';
 const WORK_DIR = join(PROJECT_DIR, 'work');
 
 type Driver = (turn: Turn, apiUrl: string, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
-const drivers: Record<string, Driver> = { claude: runClaudeTurn };
+const drivers: Record<string, Driver> = { claude: runClaudeTurn, codex: runCodexTurn };
 
 createServer((req, res) => {
   handle(req, res).catch((err) => {
