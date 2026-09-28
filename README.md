@@ -233,26 +233,38 @@ payload. Bob's own events are `bob.user_message`, `bob.turn_done` and `bob.turn_
 ## Running it on a server
 
 One image holds the API and the built web app (`Dockerfile`); project containers use
-`runtime/Dockerfile`. `scripts/publish` builds both and pushes them to Artifact Registry tagged with
-the commit. The server's compose file and secrets live in BadCode's private ops repository.
-
-The compose file has Postgres, Bob, and **one service per project**, generated from the same
-`projects.yaml` Bob reads:
+`runtime/Dockerfile`. This repository owns its own deployment (design/2026-09-28-foundation-plan.md
+T16): `deploy/compose.yml` and `deploy/env.example` are committed here, and two `./stack` verbs
+drive publishing and deploying:
 
 ```sh
-scripts/compose-projects.mjs projects.yaml compose.projects.yml \
-  --image '<registry>/runtime:${TAG}' --network bob-projects
-docker compose up -d                  # compose.yml includes compose.projects.yml
+./stack publish        # scripts/publish: builds api+runtime, pushes them tagged with HEAD's sha
+                        #   (refuses a dirty tree, so a tag always names committed code)
+./stack deploy <tag>   # deploys that tag to the box ($BOX, default ubuntu@box.badcode.tv)
 ```
 
-Every project service is on a network Bob also joins, publishes no ports, and carries its own
-repository settings, its `pass` variables as `${NAME}`, `BOB_RUNTIME_KEY`, `BOB_PROJECT_NAME`, its
-limits (`mem_limit`, `pids_limit`) and a `stop_grace_period` long enough for a turn in flight to
-finish — the runtime drains on SIGTERM, and Docker SIGKILLs it when that runs out. Bob needs
-`BOB_PROJECTS_FILE` and `BOB_RUNTIME_KEY`, and **no Docker socket**. `GET /healthz` answers 200
-when the database does.
+`./stack deploy <tag>` refuses without a tag, and refuses unless `deploy/compose.yml` exists at
+that tag (i.e. it was published) and `.env.box` exists here (the box's production secrets — see
+"Production secrets" below; git-ignored, never committed). It then, over ssh: writes
+`deploy/compose.yml` at that tag and `.env.box` (mode 600, umask 077 + write-then-rename, so
+there is never a partial or world-readable `.env`) to `/srv/apps/bob`, pins `TAG=<tag>` in
+`release.env`, removes any leftover `compose.projects.yml`/`projects.yaml` from the old
+ops-generated deployment, makes sure the `bob-projects` network and each `bob-project-*` volume
+the new compose file names exist, then `sudo app bob pull --quiet && sudo app bob up -d
+--remove-orphans` and waits up to 60s on `http://127.0.0.1:8100/healthz` before printing
+`docker ps --filter name=bob-project-`.
 
-BadCode's own deployment is `apps/bob/` in the private ops repository.
+`deploy/compose.yml` has Postgres's network, Bob, and **one service per project**, declared by
+hand (Decision 4) rather than generated — see the file itself. Every project service is on the
+`bob-projects` network Bob also joins, publishes no ports, and carries its own repository
+settings, its own `BOB_RUNTIME_TOKEN_<NAME>`/`GITHUB_TOKEN_<NAME>`, its limits (`mem_limit`,
+`pids_limit`) and a `stop_grace_period` long enough for a turn in flight to finish — the runtime
+drains on SIGTERM, and Docker SIGKILLs it when that runs out. Bob itself has **no Docker socket**;
+`GET /healthz` answers 200 when the database does.
+
+> The rest of this section (moving production secrets into `.env.box` here, the box cutover, and
+> retiring the ops repository's `apps/bob/`) is T16 items 2, 4 and 5 — still pending. Until then,
+> `apps/bob/` in the private ops repository is still what is actually running.
 
 A project's volume is declared `external`, so:
 

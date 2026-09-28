@@ -27,6 +27,13 @@ services:
       BOB_PUBLIC_URL: ${BOB_PUBLIC_URL:?}
       BOB_PROJECTS: enc
       BOB_RUNTIME_TOKEN_ENC: ${BOB_RUNTIME_TOKEN_ENC:?}
+      # Not `:?required`: a project with no BOB_DRIVE_TOKEN_<NAME> set is fine (T14) — the api
+      # must start with these empty for a box with no Drive project configured yet. Required
+      # only once some BOB_DRIVE_TOKEN_<NAME> is set (main.go is fatal in that case if these
+      # are empty).
+      BOB_DRIVE_CLIENT_ID: ${BOB_DRIVE_CLIENT_ID:-}
+      BOB_DRIVE_CLIENT_SECRET: ${BOB_DRIVE_CLIENT_SECRET:-}
+      BOB_DRIVE_TOKEN_ENC: ${BOB_DRIVE_TOKEN_ENC:-}
     networks: [box-db, bob-projects]
     ports:
       - "127.0.0.1:8100:8070"              # Caddy only
