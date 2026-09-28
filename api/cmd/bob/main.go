@@ -117,6 +117,7 @@ func main() {
 	}
 	app.mcp.Register(bobWhoami)
 	app.mcp.Register(app.workerTools()...)
+	app.mcp.Register(app.driveTools()...)
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
 

@@ -132,6 +132,9 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	mux.HandleFunc("POST /api/logout", a.logout)
 	mux.HandleFunc("GET /api/view/{token}", a.viewFile)
 	mux.HandleFunc("GET /api/view/{token}/{path...}", a.viewFile)
+	// /drive/fetch/{token} takes no cookie either: the signed, expiring token (drivefetch.go) is
+	// the credential, so curl can save the file straight from an agent's drive_fetch result.
+	mux.HandleFunc("GET /drive/fetch/{token}", a.driveFetch)
 	// /mcp takes no cookie: the chat's MCP token is the credential (mcp.go). Every method reaches
 	// the handler, which answers GET with 405 as the MCP transport expects.
 	tools := a.mcp

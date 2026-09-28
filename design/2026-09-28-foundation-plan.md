@@ -1151,7 +1151,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   -v | grep -cE -- "--- (SKIP|FAIL)"` → `0`; `./stack build && ./stack restart` →
   `curl http://127.0.0.1:8070/healthz` → `200`.
 
-### T15: Drive MCP tools and signed fetch   [Status: pending | Model: sonnet]
+### T15: Drive MCP tools and signed fetch   [Status: in progress — code committed; live check waits on a Drive token (T14) | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_drive.go`: `drive_search`, `drive_list`, `drive_read`,
   `drive_fetch` (Interfaces), each with `Available` = the caller's project has a Drive client.
   `drive_read` pages text by `offset`/`limit`. `drive_fetch` builds
@@ -1171,7 +1171,42 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `drive_fetch` + `curl` saves a PDF into `/project/work`.
 - **Depends on:** T8, T9, T14
 - [ ] done
-- Notes:
+- Notes: (executor) `api/cmd/bob/tools_drive.go` registers `drive_search`, `drive_list`,
+  `drive_read`, `drive_fetch` with `Available` = `a.drive[c.Project]` present (same pattern as
+  T10's worker tools). `drive_fetch` calls `Client.Download` once to get `name`/`mime_type` (no
+  metadata-only method exists on `drive.Client`), closes the body immediately without reading it,
+  then mints the token — the real bytes are only streamed by `GET /drive/fetch/{token}`
+  (`drivefetch.go`), which calls `Download` again. `drive_read`'s `offset`/`limit` page over
+  `[]rune(text)`, not bytes, so multi-byte UTF-8 text pages correctly; default `limit` 50000,
+  `offset`/`limit` clamped to `[0, total_chars]`. `drivefetch.go`: `signDriveFetchToken` /
+  `verifyDriveFetchToken` implement the ticket's exact token shape; `verifyDriveFetchToken` returns
+  the same `ok=false` for a malformed token, a bad HMAC (checked with `hmac.Equal`, constant time)
+  and an expired one, so `GET /drive/fetch/{token}` always answers 403 without distinguishing why.
+  `GET /drive/fetch/{token}` is registered on the top-level mux next to `/api/view/{token}`, outside
+  `a.requireLogin(api)`, so it takes no cookie. `mcpCaller` already builds `Caller.APIBase` as
+  `"http://" + r.Host` (from T8/T9); `drive_fetch` uses it unchanged, never `BOB_PUBLIC_URL`.
+  `api/cmd/bob/tools_drive_test.go`: a fake Drive server (`httptest.Server`, OAuth token endpoint +
+  a `/files`/`/files/{id}` REST fake) built the same way as `internal/drive/drive_test.go`'s, but a
+  real `*drive.Client` is pointed at it with `drive.WithTokenEndpoint`/`drive.WithAPIEndpoint` (T14)
+  instead of adding a fakeable interface — no separate interface was needed since the Drive
+  dependency (`a.drive map[string]*drive.Client`) was already swappable per test. Covers: `drive_*`
+  absent from `tools/list` for a project with no Drive client and present for one that has one; an
+  unavailable tool named directly is a JSON-RPC `-32602` error (not a tool-call `isError`, since
+  `mcp.Server.call` rejects an unlisted tool before invoking it — the first version of this test
+  wrongly expected `isError`; fixed to check the RPC `error` envelope instead); `drive_read` paging
+  by offset/limit (and the whole-file default case); `drive_fetch` producing a URL under
+  `http://api:8070/drive/fetch/…` (the test's fixed `Host` header) that a bare `GET` (no auth)
+  actually streams, with `Content-Disposition: attachment; filename="report.pdf"`; a tampered token
+  (last signature hex digit flipped) → 403; an expired token (signed with `exp` in the past) → 403;
+  a garbage token (no `.`) → 403; sign/verify round-trip and wrong-secret cases as plain function
+  tests. No real Drive OAuth token exists yet (Kai has not created the Google Cloud OAuth client —
+  T14's human step is still open), so the manual check in Validation (`BOB_DRIVE_TOKEN_DEV` against
+  a live Drive) was skipped, as this ticket's instructions anticipated; everything else in
+  Validation was run against the real box/dev stack. Validation: `./stack test` → ends
+  `── all green`; `cd api && go vet ./...` → clean; `BOB_TEST_DATABASE_URL=...
+  go test ./... -count=1 -v | grep -cE -- "--- (SKIP|FAIL)"` → `0`; `./stack build && ./stack
+  restart` → `curl http://127.0.0.1:8070/healthz` → `ok`; `curl -o /dev/null -w '%{http_code}'
+  http://127.0.0.1:8070/drive/fetch/garbage` → `403`.
 
 ### T16: `./stack deploy`, secrets moved, ENC goes live   [Status: pending | Model: sonnet]
 - **Scope:**
