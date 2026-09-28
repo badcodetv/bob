@@ -104,6 +104,7 @@ func main() {
 		now:       time.Now,
 	}
 	app.mcp.Register(bobWhoami)
+	app.mcp.Register(app.workerTools()...)
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
 

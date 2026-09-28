@@ -871,7 +871,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `{"project":"dev","session":"<that chat's id>","user":"kaiyadavenport@gmail.com","worker":""}`,
   which the model then quoted back verbatim — acceptance criterion met.
 
-### T10: Worker MCP tools   [Status: pending | Model: sonnet]
+### T10: Worker MCP tools   [Status: done | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_workers.go`: `worker_create`, `worker_update`, `worker_list`,
   `worker_delete` (Interfaces, without labels until T18), using `validWorker` from T5. Descriptions
   tell the agent: names are permanent; `why` is recorded; the prompt is the worker's whole job
@@ -883,8 +883,28 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `./stack test` → "all green"; manual: plain chat on `dev`, "create a claude worker
   named poet that writes haiku; why: test" → it appears under Workers with 1 version.
 - **Depends on:** T5, T9
-- [ ] done
-- Notes:
+- [x] done
+- Notes: implemented `api/cmd/bob/tools_workers.go` (`(a *app) workerTools() []mcp.Tool`, registered
+  in `main.go` next to `bob_whoami`) and `api/cmd/bob/tools_workers_test.go`. `worker_create` and
+  `worker_update` share a `workerToolArgs` struct and `validWorker`/the store methods from T5/T4;
+  `worker_list` returns a `workerSummary` (no prompt) unless called with `name`, which returns the
+  full `store.Worker`; `worker_delete` requires `why` itself (the store also enforces it, but a
+  tool-side check gives a clearer message before the store round-trip). All four scope to
+  `Caller.Project` only — no argument names a project — so another project's worker is invisible to
+  `worker_list` (by name or in the listing) and cannot be updated or deleted. TDD: failing tests
+  first in `tools_workers_test.go` covering create+version(changed_by), duplicate name (tool
+  error), bad engine/effort (tool error), update, list (summary vs. full-with-name), delete
+  (missing why → tool error; with why → gone), and cross-project isolation (list by name, plain
+  list, delete all refuse/omit the other project's worker, which is left untouched). Validation:
+  `go vet ./...` clean; `BOB_TEST_DATABASE_URL=... go test ./... -count=1 -v` — all pass, no
+  SKIP/FAIL; `./stack test` → "all green". Manual check after `./stack restart`: minted a
+  `bob_session` cookie for kaiyadavenport@gmail.com with a throwaway `api/cmd/minttmp` program
+  (deleted afterwards, along with the cookie file), created a plain chat on `dev` via
+  `POST /api/projects/dev/sessions`, and sent "Create a claude worker named poet that writes haiku
+  about whatever it is given. why: test of worker_create" via `POST /api/sessions/{id}/messages`.
+  `GET /api/projects/dev/workers` shows `poet` with the haiku prompt the agent wrote; its
+  `/versions` shows exactly one version, `action: "create"`, `changed_by:
+  "kaiyadavenport@gmail.com"`, `why: "test of worker_create"`.
 
 ### T11: Codex driver in the runtime   [Status: pending | Model: opus]
 - **Scope:** Add `@openai/codex-sdk` to `runtime/package.json`. In `runtime/Dockerfile` put the
