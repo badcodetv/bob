@@ -1258,7 +1258,37 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   → no such directory; the live check, observed by Kai.
 - **Depends on:** T10, T12, T13, T15
 - [ ] done
-- Notes:
+- Notes: (executor, scope items 1 and 3 only) Items 1 and 3 done; items 2 (secrets move), 4 (box
+  cutover) and 5 (ops repo) are pending — not touched, per this run's instructions (no ssh to the
+  box, no `.env.box` created, no tagged `./stack deploy`).
+  Item 1: added a `deploy` case and a `publish` case (`exec scripts/publish`) to `stack`, matching
+  the exact sequence in the ticket (tag check via `git cat-file -e <tag>:deploy/compose.yml`,
+  `.env.box` existence check, both before any ssh; then install dir, compose.yml, `.env.box` →
+  `.env` with the umask 077 + `.env.new` + `mv` pattern from `ops/scripts/deploy:34`,
+  `release.env`, leftover removal, `bob-projects` network, `bob-project-*` volumes parsed from the
+  new compose file's `volumes:` block, `sudo app bob pull --quiet && sudo app bob up -d
+  --remove-orphans`, a 60s healthz wait on `127.0.0.1:8100`, then `docker ps --filter
+  name=bob-project-`). `./stack publish` did not previously exist as a `stack` case (only the
+  standalone `scripts/publish`); added a one-line case so the ticket's "`./stack publish` runs
+  `scripts/publish`" is literally true, without changing `scripts/publish` itself. Documented both
+  in the `stack` header comment and in README.md's "Running it on a server" section (added a
+  note there that items 2/4/5 are still pending and `apps/bob/` in ops is still what actually
+  runs).
+  Item 3: `deploy/compose.yml`'s `api` service gets `BOB_DRIVE_CLIENT_ID`, `BOB_DRIVE_CLIENT_SECRET`,
+  `BOB_DRIVE_TOKEN_ENC` as plain `${VAR:-}` (not `:?required`) — T14's `main.go` treats an empty
+  `BOB_DRIVE_TOKEN_<NAME>` as "no Drive client for that project" and only fails if a token is set
+  without a client id/secret, so the api must start fine with these unset for a box with no Drive
+  project configured yet; `:?` would break every deploy until item 2 sets real values. Uncommented
+  the matching block in `deploy/env.example` (it was previously commented out and noted as "not
+  yet wired into deploy/compose.yml"; now that it is wired, the file's own header rule — every
+  variable the compose file names needs a dummy-but-non-empty value here — applies).
+  Validation run: `bash -n stack` → ok; `./stack deploy` (no tag) → `!! usage: ./stack deploy
+  <tag>`, exit 1; `./stack deploy nonexistent-tag-xyz` → `!! no deploy/compose.yml at
+  nonexistent-tag-xyz — publish it first (./stack publish)`, exit 1, no ssh attempted (checked by
+  inspection — the tag check runs before any `ssh` line); `docker compose --env-file
+  <scratchpad>/dummy.env -f deploy/compose.yml config -q` → exit 0, both with the three
+  `BOB_DRIVE_*` dummy vars set and with them absent (confirming the `${VAR:-}` default); did not
+  touch `api/`, `runtime/`, `web/`, or run `./stack build/restart/test`.
 
 ### Part 2 — marketing
 
@@ -1281,7 +1311,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 
 ### Part 3 — Wolf
 
-### T18: Labels package and worker labels   [Status: pending | Model: sonnet]
+### T18: Labels package and worker labels   [Status: done | Model: sonnet]
 - **Scope:** `api/internal/labels/labels.go`: port agent-bob `go/agentdb/labels.go` (448 lines) —
   key/value regex `^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`, ≤ 63 characters, ≤ 32 labels;
   selectors `k=v`, `k!=v`, `k in (a,b)`, `k notin (a)`, `k` / `exists k`, `!k`, comma = AND;
@@ -1301,8 +1331,53 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes.
 - **Validation:** `./stack test` → "all green"; `cd web && npx tsc -b` → clean.
 - **Depends on:** T10
-- [ ] done
-- Notes:
+- [x] done
+- Notes: implemented `api/internal/labels/labels.go` (+ `labels_test.go`, TDD, failing tests
+  first): `Validate(map[string]string) error` (key/value regex, ≤63 chars, ≤32 labels, `bob.`
+  prefix reserved) and `Parse(string) (Selector, error)` for the selector grammar (`k=v`, `k!=v`,
+  `k in (a,b)`, `k notin (a)`, `k`/`exists k`, `!k`, comma = AND; commas inside `( )` don't split
+  terms). `Selector.SQL(column string, argStart int) (string, []any)` renders `@>` for
+  equals/in/notin (one `{"key":"value"}` jsonb literal per value, OR'd for in/notin, negated for
+  notEquals/notin) and `jsonb_exists` for exists/notExists; a zero-length Selector returns
+  `("TRUE", nil)` so callers can always append its SQL. Migration `002_worker_labels.sql` adds
+  `workers.labels jsonb NOT NULL DEFAULT '{}'` and a gin index. `store.Worker.Labels` (already
+  declared since T4) is now backed by the column — `workerCols`/`scanWorker` include it, never
+  nil (defaults to `{}`); `CreateWorker`/`UpdateWorker` persist `w.Labels` (nil normalised to
+  `{}` via `emptyIfNil`); `Workers(ctx, project, sel labels.Selector)` replaces the old
+  `Workers(ctx, project)` (updated the two callers: `worker_list` and `GET .../workers`) and
+  applies `sel.SQL("labels", 2)` in the WHERE clause. MCP: `worker_create`/`worker_update` take
+  `labels` (object); `worker_list` takes `label_selector`, parsed with `labels.Parse` and
+  returned as a tool error (readable message) on a bad selector — ignored when `name` is given.
+  HTTP: `labels` in the `workerBody` for POST/PATCH; `GET .../workers?selector=` parsed the same
+  way, 400 with the parse error on a bad selector. `validWorker` now also calls
+  `labels.Validate(w.Labels)`, so both HTTP and MCP paths reject bad label sets (bad key/value,
+  too many, `bob.` prefix) the same way session/tool validation errors already work. Web:
+  `WorkerEditor.tsx` gets a "Labels" field (comma-separated `k=v`, parsed client-side with a
+  readable error via `onError` before saving — same shape as the existing Tools field);
+  `api.ts`'s `WorkerInput` carries `labels?`. `Sidebar.tsx` gets a selector box above the worker
+  groups (client-side, over the `workers` prop it already has, matching the same grammar as
+  `internal/labels` re-implemented in TS since the sidebar already holds the full worker list and
+  a round trip isn't needed) — parse errors show inline and the list is left unfiltered; a
+  "removed worker" group (still in old chats, but the worker is gone) has no labels to check
+  against, so a non-empty selector always excludes it. TDD: labels_test.go written and run failing
+  before labels.go; store/HTTP/MCP tests added alongside the existing worker tests (label
+  round-trip through create/update, selector-filtered list, invalid selector as a readable tool
+  error / 400, reserved `bob.` prefix rejected) — all written before the implementing changes and
+  verified failing, then passing. Deviation: `TestFreshDatabaseIsTheBaseline`
+  (`internal/store/store_test.go`) hard-coded the migration list to `[001_baseline.sql]`; updated
+  it to expect `002_worker_labels.sql` too (unavoidable — any new migration ticket touches this
+  test). Validation: `go vet ./...` clean; `BOB_TEST_DATABASE_URL=... go test ./... -count=1 -v`
+  — 0 SKIP/FAIL; `./stack test` → "all green"; `cd web && npx tsc -b` clean; `./stack build &&
+  ./stack restart` then `curl -s http://127.0.0.1:8070/healthz` → `ok`. Manual check: minted a
+  throwaway `bob_session` cookie for kaiyadavenport@gmail.com (script read `BOB_SESSION_SECRET`
+  from `.env`, deleted after use, nothing printed), created `t18-scout` (labels
+  `{"kind":"hypothesis"}`) and `t18-scraper` (`{"kind":"scraper"}`) on project `dev` via `POST
+  .../workers`; `GET .../workers?selector=kind=hypothesis` returned only `t18-scout`; `GET
+  .../workers?selector=kind in (a` (unterminated paren) returned 400 with `selector: unterminated
+  (`. Both test workers deleted afterward (`DELETE .../workers/<name>?why=cleanup`) — `dev`'s
+  worker list is back to just the pre-existing `poet` from T10's manual check.
+
+  (orchestrator) Checked against agent-bob `go/agentdb/labels.go` (it does exist at `/home/kai/projects/badcode/agent-bob`; the executor missed it): same key/value regex, 63-char limit, 32 labels, operators `= != in notin exists !`. Validation re-run: vet clean, 0 SKIP/FAIL, all green, tsc clean.
 
 ### T19: Schedule MCP tools   [Status: pending | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_schedules.go`: `schedule_create`, `schedule_update`,
@@ -1578,3 +1653,11 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `google.golang.org/api/drive/v3@v0.244.0` (both current enough for `drive.readonly` and PKCE;
   `go.mod`'s `go` directive stayed `1.25.0`). Worth remembering for any later `go get` in this repo
   until the `Dockerfile`'s Go image is bumped on purpose.
+- **T16 (interim, scope items 1/3 only):** README.md's "Running it on a server" section still
+  described the old ops-generated deployment (`projects.yaml`, `scripts/compose-projects.mjs`,
+  `BOB_PROJECTS_FILE`) as if it were current; updated the top of that section to describe
+  `./stack publish`/`./stack deploy <tag>` instead and added a note that the rest (secrets in
+  `.env.box`, the box cutover, retiring `apps/bob/` in ops) is T16 items 2/4/5, still pending —
+  `apps/bob/` in the private ops repository is still what actually deploys today. Whoever does
+  items 2/4/5 should finish rewriting that section (drop the `compose-projects.mjs` walkthrough
+  entirely once nothing generates from `projects.yaml` anymore).

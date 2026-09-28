@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/badcodetv/bob/internal/labels"
 	"github.com/badcodetv/bob/internal/store"
 )
 
@@ -33,7 +34,7 @@ func validWorker(w store.Worker) error {
 	case len(w.Tools) > 0 && w.Engine != "claude":
 		return errors.New("tools are only for claude workers")
 	}
-	return nil
+	return labels.Validate(w.Labels)
 }
 
 func effortsFor(engine string) map[string]bool {
@@ -65,18 +66,24 @@ func validSettings(w http.ResponseWriter, engine, model, effort string) bool {
 }
 
 func (a *app) listWorkers(w http.ResponseWriter, r *http.Request) {
-	ws, err := a.store.Workers(r.Context(), r.PathValue("project"))
+	sel, err := labels.Parse(r.URL.Query().Get("selector"))
+	if err != nil {
+		http.Error(w, "selector: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	ws, err := a.store.Workers(r.Context(), r.PathValue("project"), sel)
 	reply(w, map[string]any{"workers": ws}, err)
 }
 
 type workerBody struct {
-	Name   string   `json:"name"`
-	Engine string   `json:"engine"`
-	Model  string   `json:"model"`
-	Effort string   `json:"effort"`
-	Tools  []string `json:"tools"`
-	Prompt string   `json:"prompt"`
-	Why    string   `json:"why"`
+	Name   string            `json:"name"`
+	Engine string            `json:"engine"`
+	Model  string            `json:"model"`
+	Effort string            `json:"effort"`
+	Tools  []string          `json:"tools"`
+	Prompt string            `json:"prompt"`
+	Labels map[string]string `json:"labels"`
+	Why    string            `json:"why"`
 }
 
 func (a *app) createWorker(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +92,7 @@ func (a *app) createWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	x := store.Worker{Project: r.PathValue("project"), Name: body.Name, Engine: body.Engine,
-		Model: body.Model, Effort: body.Effort, Tools: body.Tools, Prompt: body.Prompt}
+		Model: body.Model, Effort: body.Effort, Tools: body.Tools, Prompt: body.Prompt, Labels: body.Labels}
 	if err := validWorker(x); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -101,7 +108,7 @@ func (a *app) updateWorker(w http.ResponseWriter, r *http.Request) {
 	}
 	project, name := r.PathValue("project"), r.PathValue("worker")
 	x := store.Worker{Project: project, Name: name, Engine: body.Engine,
-		Model: body.Model, Effort: body.Effort, Tools: body.Tools, Prompt: body.Prompt}
+		Model: body.Model, Effort: body.Effort, Tools: body.Tools, Prompt: body.Prompt, Labels: body.Labels}
 	if err := validWorker(x); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

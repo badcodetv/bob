@@ -163,6 +163,62 @@ func TestWorkerList(t *testing.T) {
 	}
 }
 
+func TestWorkerCreateWithLabelsAndListByLabelSelector(t *testing.T) {
+	a, token := workerToolsApp(t)
+	if _, isErr, text := callTool(t, a, token, "worker_create",
+		`{"name":"scout","engine":"claude","prompt":"scout","labels":{"kind":"hypothesis"},"why":"new"}`); isErr {
+		t.Fatalf("setup create failed: %s", text)
+	}
+	if _, isErr, text := callTool(t, a, token, "worker_create",
+		`{"name":"scraper","engine":"claude","prompt":"scrape","labels":{"kind":"scraper"},"why":"new"}`); isErr {
+		t.Fatalf("setup create failed: %s", text)
+	}
+
+	status, isErr, text := callTool(t, a, token, "worker_list", `{"label_selector":"kind=hypothesis"}`)
+	if status != http.StatusOK || isErr {
+		t.Fatalf("list by selector = %d isError=%v %s", status, isErr, text)
+	}
+	if !strings.Contains(text, `"name":"scout"`) {
+		t.Errorf("list by selector missing scout: %s", text)
+	}
+	if strings.Contains(text, `"name":"scraper"`) || strings.Contains(text, `"name":"researcher"`) {
+		t.Errorf("list by selector should only return matching workers: %s", text)
+	}
+}
+
+func TestWorkerListInvalidSelectorIsAToolError(t *testing.T) {
+	a, token := workerToolsApp(t)
+	status, isErr, text := callTool(t, a, token, "worker_list", `{"label_selector":"kind in (a"}`)
+	if status != http.StatusOK || !isErr {
+		t.Fatalf("invalid selector = %d isError=%v %s", status, isErr, text)
+	}
+	if text == "" {
+		t.Error("expected a readable error message")
+	}
+}
+
+func TestWorkerUpdateLabels(t *testing.T) {
+	a, token := workerToolsApp(t)
+	status, isErr, text := callTool(t, a, token, "worker_update",
+		`{"name":"researcher","engine":"claude","prompt":"research","labels":{"kind":"hypothesis"},"why":"add labels"}`)
+	if status != http.StatusOK || isErr {
+		t.Fatalf("update = %d isError=%v %s", status, isErr, text)
+	}
+	var updated store.Worker
+	if err := json.Unmarshal([]byte(text), &updated); err != nil || updated.Labels["kind"] != "hypothesis" {
+		t.Fatalf("updated = %+v (%v)", updated, err)
+	}
+}
+
+func TestWorkerCreateInvalidLabelIsAToolError(t *testing.T) {
+	a, token := workerToolsApp(t)
+	status, isErr, text := callTool(t, a, token, "worker_create",
+		`{"name":"bad","engine":"claude","prompt":"x","labels":{"bob.reserved":"v"},"why":"new"}`)
+	if status != http.StatusOK || !isErr {
+		t.Fatalf("reserved label = %d isError=%v %s", status, isErr, text)
+	}
+}
+
 func TestWorkerDelete(t *testing.T) {
 	a, token := workerToolsApp(t)
 	if _, isErr, _ := callTool(t, a, token, "worker_create",

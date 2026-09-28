@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/badcodetv/bob/internal/labels"
 	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/store"
 )
@@ -66,7 +67,8 @@ func (a *app) workerTools() []mcp.Tool {
 			InputSchema: workerListSchema,
 			Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
 				var in struct {
-					Name string `json:"name"`
+					Name          string `json:"name"`
+					LabelSelector string `json:"label_selector"`
 				}
 				if len(args) > 0 {
 					if err := json.Unmarshal(args, &in); err != nil {
@@ -80,7 +82,11 @@ func (a *app) workerTools() []mcp.Tool {
 					}
 					return w, err
 				}
-				ws, err := a.store.Workers(ctx, c.Project)
+				sel, err := labels.Parse(in.LabelSelector)
+				if err != nil {
+					return nil, errors.New("label_selector: " + err.Error())
+				}
+				ws, err := a.store.Workers(ctx, c.Project, sel)
 				if err != nil {
 					return nil, err
 				}
@@ -133,6 +139,7 @@ var workerCreateSchema = json.RawMessage(`{
 		"effort": {"type": "string"},
 		"tools": {"type": "array", "items": {"type": "string"}, "description": "claude only"},
 		"prompt": {"type": "string", "description": "the worker's whole job description"},
+		"labels": {"type": "object", "additionalProperties": {"type": "string"}, "description": "key/value labels for selection, e.g. by worker_list's label_selector; keys may not start with bob."},
 		"why": {"type": "string"}
 	},
 	"required": ["name", "engine", "prompt", "why"]
@@ -147,6 +154,7 @@ var workerUpdateSchema = json.RawMessage(`{
 		"effort": {"type": "string"},
 		"tools": {"type": "array", "items": {"type": "string"}, "description": "claude only"},
 		"prompt": {"type": "string", "description": "the worker's whole job description"},
+		"labels": {"type": "object", "additionalProperties": {"type": "string"}, "description": "key/value labels for selection, e.g. by worker_list's label_selector; keys may not start with bob."},
 		"why": {"type": "string"}
 	},
 	"required": ["name", "why"]
@@ -155,7 +163,8 @@ var workerUpdateSchema = json.RawMessage(`{
 var workerListSchema = json.RawMessage(`{
 	"type": "object",
 	"properties": {
-		"name": {"type": "string", "description": "with a name: that one worker, including its prompt. Without: a summary of every worker."}
+		"name": {"type": "string", "description": "with a name: that one worker, including its prompt. Without: a summary of every worker."},
+		"label_selector": {"type": "string", "description": "e.g. \"kind=hypothesis\", \"env in (dev,staging)\", \"!retired\"; filters the summary list. Ignored when name is set."}
 	}
 }`)
 
@@ -170,13 +179,14 @@ var workerDeleteSchema = json.RawMessage(`{
 
 // workerToolArgs is worker_create's and worker_update's arguments: the shared worker fields plus why.
 type workerToolArgs struct {
-	Name   string   `json:"name"`
-	Engine string   `json:"engine"`
-	Model  string   `json:"model"`
-	Effort string   `json:"effort"`
-	Tools  []string `json:"tools"`
-	Prompt string   `json:"prompt"`
-	Why    string   `json:"why"`
+	Name   string            `json:"name"`
+	Engine string            `json:"engine"`
+	Model  string            `json:"model"`
+	Effort string            `json:"effort"`
+	Tools  []string          `json:"tools"`
+	Prompt string            `json:"prompt"`
+	Labels map[string]string `json:"labels"`
+	Why    string            `json:"why"`
 }
 
 func decodeWorkerArgs(args json.RawMessage) (workerToolArgs, error) {
@@ -187,7 +197,7 @@ func decodeWorkerArgs(args json.RawMessage) (workerToolArgs, error) {
 
 func (in workerToolArgs) toStoreWorker(project string) store.Worker {
 	return store.Worker{Project: project, Name: in.Name, Engine: in.Engine, Model: in.Model,
-		Effort: in.Effort, Tools: in.Tools, Prompt: in.Prompt}
+		Effort: in.Effort, Tools: in.Tools, Prompt: in.Prompt, Labels: in.Labels}
 }
 
 // workerSummary is one row of worker_list's answer when it is not asked for a single worker: the

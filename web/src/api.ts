@@ -14,7 +14,7 @@ export interface WorkerVersion {
 }
 export interface PromptVersion { id: number; prompt: string; why: string; changed_by: string; changed_at: string }
 /** What a worker needs to be created or changed; name and why are only required by the server. */
-export type WorkerInput = { name?: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string; why: string }
+export type WorkerInput = { name?: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string; labels?: Record<string, string>; why: string }
 export interface Session {
   id: string; project: string; worker: string; engine: string; harness_session_id: string; model: string; effort: string; created_at: string
   // Only on the project's session list: the first message, messages sent, and the last activity.

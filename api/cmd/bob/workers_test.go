@@ -74,6 +74,42 @@ func TestWorkerCRUDAndVersions(t *testing.T) {
 	}
 }
 
+// Labels round-trip through create/update, and GET .../workers?selector= filters the list;
+// an invalid selector is a 400 with a readable message.
+func TestWorkerLabelsAndSelector(t *testing.T) {
+	a, _, _ := newScheduleApp(t)
+	tester, _, do := authedApp(t, a)
+
+	res := do(tester, "POST", "/api/projects/wolf/workers", `{"name":"scout","engine":"claude","prompt":"x","labels":{"kind":"hypothesis"},"why":"new"}`)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"kind":"hypothesis"`) {
+		t.Fatalf("create with labels = %d %s", res.Code, res.Body)
+	}
+	res = do(tester, "POST", "/api/projects/wolf/workers", `{"name":"other","engine":"claude","prompt":"x","labels":{"kind":"scraper"},"why":"new"}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("create other = %d %s", res.Code, res.Body)
+	}
+
+	res = do(tester, "GET", "/api/projects/wolf/workers?selector=kind%3Dhypothesis", "")
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"name":"scout"`) || strings.Contains(res.Body.String(), `"name":"other"`) {
+		t.Fatalf("list by selector = %d %s", res.Code, res.Body)
+	}
+
+	res = do(tester, "GET", "/api/projects/wolf/workers?selector=kind+in+(a", "")
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("invalid selector = %d %s, want 400", res.Code, res.Body)
+	}
+
+	res = do(tester, "PATCH", "/api/projects/wolf/workers/scout", `{"engine":"claude","prompt":"x","labels":{"kind":"retired"},"why":"relabel"}`)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"kind":"retired"`) {
+		t.Fatalf("update labels = %d %s", res.Code, res.Body)
+	}
+
+	res = do(tester, "POST", "/api/projects/wolf/workers", `{"name":"bad","engine":"claude","prompt":"x","labels":{"bob.reserved":"v"},"why":"new"}`)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("reserved label = %d %s, want 400", res.Code, res.Body)
+	}
+}
+
 // A duplicate worker name in the same project is a conflict, not a generic error.
 func TestCreateWorkerDuplicateIsConflict(t *testing.T) {
 	a, _, _ := newScheduleApp(t)

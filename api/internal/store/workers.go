@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/badcodetv/bob/internal/labels"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -22,7 +23,7 @@ type Worker struct {
 	// Tools are what the agent may use without asking; nil means the harness's default.
 	Tools  []string `json:"tools,omitempty"`
 	Prompt string   `json:"prompt"`
-	// Labels is always {} until T18 adds the column; every worker returned by this package has it.
+	// Labels is never nil for a worker returned by this package: {} rather than null.
 	Labels    map[string]string `json:"labels"`
 	CreatedBy string            `json:"created_by"`
 	UpdatedBy string            `json:"updated_by"`
@@ -57,17 +58,28 @@ type PromptVersion struct {
 // worker name already used in the project.
 var ErrConflict = errors.New("already exists")
 
-const workerCols = `id, project, name, engine, model, effort, tools, prompt, created_by, updated_by, created_at, updated_at`
+const workerCols = `id, project, name, engine, model, effort, tools, prompt, labels, created_by, updated_by, created_at, updated_at`
 
 func scanWorker(row pgx.Row) (Worker, error) {
 	var w Worker
-	err := row.Scan(&w.ID, &w.Project, &w.Name, &w.Engine, &w.Model, &w.Effort, &w.Tools, &w.Prompt,
+	err := row.Scan(&w.ID, &w.Project, &w.Name, &w.Engine, &w.Model, &w.Effort, &w.Tools, &w.Prompt, &w.Labels,
 		&w.CreatedBy, &w.UpdatedBy, &w.CreatedAt, &w.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return w, ErrNotFound
 	}
-	w.Labels = map[string]string{}
+	if w.Labels == nil {
+		w.Labels = map[string]string{}
+	}
 	return w, err
+}
+
+// emptyIfNil returns m, or an empty map if m is nil, so labels is always jsonb '{}' rather than
+// null.
+func emptyIfNil(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // isUniqueViolation reports whether err is Postgres error code 23505 (unique_violation).
@@ -89,9 +101,12 @@ func (s *Store) Worker(ctx context.Context, project, name string) (Worker, error
 	return scanWorker(s.db.QueryRow(ctx, `SELECT `+workerCols+` FROM workers WHERE project = $1 AND name = $2`, project, name))
 }
 
-// Workers lists a project's workers by name.
-func (s *Store) Workers(ctx context.Context, project string) ([]Worker, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+workerCols+` FROM workers WHERE project = $1 ORDER BY name`, project)
+// Workers lists a project's workers by name, restricted to those matching sel (a zero-length
+// Selector matches every worker).
+func (s *Store) Workers(ctx context.Context, project string, sel labels.Selector) ([]Worker, error) {
+	cond, args := sel.SQL("labels", 2)
+	rows, err := s.db.Query(ctx, `SELECT `+workerCols+` FROM workers WHERE project = $1 AND `+cond+` ORDER BY name`,
+		append([]any{project}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,9 +122,9 @@ func (s *Store) CreateWorker(ctx context.Context, w Worker, by, why string) (Wor
 	var created Worker
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		var err error
-		created, err = scanWorker(tx.QueryRow(ctx, `INSERT INTO workers (project, name, engine, model, effort, tools, prompt, created_by, updated_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING `+workerCols,
-			w.Project, w.Name, w.Engine, w.Model, w.Effort, w.Tools, w.Prompt, by))
+		created, err = scanWorker(tx.QueryRow(ctx, `INSERT INTO workers (project, name, engine, model, effort, tools, prompt, labels, created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING `+workerCols,
+			w.Project, w.Name, w.Engine, w.Model, w.Effort, w.Tools, w.Prompt, emptyIfNil(w.Labels), by))
 		if err != nil {
 			return err
 		}
@@ -131,8 +146,8 @@ func (s *Store) UpdateWorker(ctx context.Context, w Worker, by, why string) (Wor
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		var err error
 		updated, err = scanWorker(tx.QueryRow(ctx, `UPDATE workers SET engine = $3, model = $4, effort = $5, tools = $6, prompt = $7,
-			updated_by = $8, updated_at = now() WHERE project = $1 AND name = $2 RETURNING `+workerCols,
-			w.Project, w.Name, w.Engine, w.Model, w.Effort, w.Tools, w.Prompt, by))
+			labels = $8, updated_by = $9, updated_at = now() WHERE project = $1 AND name = $2 RETURNING `+workerCols,
+			w.Project, w.Name, w.Engine, w.Model, w.Effort, w.Tools, w.Prompt, emptyIfNil(w.Labels), by))
 		if err != nil {
 			return err
 		}

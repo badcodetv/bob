@@ -3,6 +3,8 @@ package store
 import (
 	"errors"
 	"testing"
+
+	"github.com/badcodetv/bob/internal/labels"
 )
 
 func mkWorker(project, name string) Worker {
@@ -10,7 +12,7 @@ func mkWorker(project, name string) Worker {
 		Tools: []string{"bash", "read"}, Prompt: "be helpful"}
 }
 
-// CreateWorker writes the worker and one version, and Labels is always {} for now.
+// CreateWorker writes the worker and one version.
 func TestCreateWorker(t *testing.T) {
 	st := newTestStore(t)
 	ctx := t.Context()
@@ -158,9 +160,46 @@ func TestWorkers(t *testing.T) {
 	if _, err := st.CreateWorker(ctx, mkWorker("wolf", "alpha"), "kai", "a"); err != nil {
 		t.Fatal(err)
 	}
-	ws, err := st.Workers(ctx, "wolf")
+	ws, err := st.Workers(ctx, "wolf", labels.Selector{})
 	if err != nil || len(ws) != 2 || ws[0].Name != "alpha" || ws[1].Name != "zeta" {
 		t.Errorf("workers = %v, %v; want [alpha, zeta]", ws, err)
+	}
+}
+
+// Workers filters by a label selector: only matching workers of the project are returned.
+func TestWorkersLabelSelector(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	if err := st.ReconcileProjects(ctx, []string{"wolf"}); err != nil {
+		t.Fatal(err)
+	}
+	a := mkWorker("wolf", "alpha")
+	a.Labels = map[string]string{"kind": "hypothesis"}
+	if _, err := st.CreateWorker(ctx, a, "kai", "a"); err != nil {
+		t.Fatal(err)
+	}
+	z := mkWorker("wolf", "zeta")
+	z.Labels = map[string]string{"kind": "scraper"}
+	if _, err := st.CreateWorker(ctx, z, "kai", "a"); err != nil {
+		t.Fatal(err)
+	}
+
+	sel, err := labels.Parse("kind=hypothesis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := st.Workers(ctx, "wolf", sel)
+	if err != nil || len(ws) != 1 || ws[0].Name != "alpha" {
+		t.Errorf("workers with selector = %v, %v; want [alpha]", ws, err)
+	}
+
+	none, err := labels.Parse("kind=nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err = st.Workers(ctx, "wolf", none)
+	if err != nil || len(ws) != 0 {
+		t.Errorf("workers with non-matching selector = %v, %v; want []", ws, err)
 	}
 }
 

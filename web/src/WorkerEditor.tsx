@@ -11,11 +11,23 @@ import { PageBar, when, WorkerBadge } from './ui'
 const effortsFor = (engine: string) => (engine === 'codex' ? codexEfforts : claudeEfforts)
 const modelsFor = (engine: string) => (engine === 'codex' ? codexModels : claudeModels)
 
-type Form = { name: string; engine: string; model: string; effort: string; tools: string; prompt: string }
+type Form = { name: string; engine: string; model: string; effort: string; tools: string; prompt: string; labels: string }
 const blank = (w?: Worker): Form => ({
   name: w?.name ?? '', engine: w?.engine ?? 'claude', model: w?.model ?? '', effort: w?.effort ?? '',
   tools: (w?.tools ?? []).join(', '), prompt: w?.prompt ?? '',
+  labels: Object.entries(w?.labels ?? {}).map(([k, v]) => `${k}=${v}`).join(', '),
 })
+
+/** Parses "k=v, k2=v2" into a labels object. Throws with a readable message on a bad entry. */
+function parseLabels(s: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const part of s.split(',').map((p) => p.trim()).filter(Boolean)) {
+    const eq = part.indexOf('=')
+    if (eq < 1) throw new Error(`labels: "${part}" is not key=value`)
+    out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim()
+  }
+  return out
+}
 
 /**
  * Create a worker (name is undefined) or edit an existing one, with its version history.
@@ -50,9 +62,16 @@ export function WorkerEditor({ project, name, workers, onSaved, onDeleted, onErr
 
   const save = () => {
     if (!why.trim() || (!name && !form.name.trim())) return
+    let labels: Record<string, string>
+    try {
+      labels = parseLabels(form.labels)
+    } catch (e) {
+      onError(e)
+      return
+    }
     setBusy(true)
     const tools = form.engine === 'claude' && form.tools.trim() ? form.tools.split(',').map((t) => t.trim()).filter(Boolean) : undefined
-    const body = { engine: form.engine, model: form.model, effort: form.effort, tools, prompt: form.prompt, why: why.trim() }
+    const body = { engine: form.engine, model: form.model, effort: form.effort, tools, prompt: form.prompt, labels, why: why.trim() }
     const done = name ? api.updateWorker(project, name, body) : api.createWorker(project, { ...body, name: form.name.trim() })
     done.then(onSaved).catch(onError).finally(() => setBusy(false))
   }
@@ -106,6 +125,9 @@ export function WorkerEditor({ project, name, workers, onSaved, onDeleted, onErr
             )}
             <Field label="Prompt" hint="The worker's whole job description. The Bob note and the project prompt are prepended automatically.">
               <Textarea value={form.prompt} rows={10} onChange={(e) => set('prompt', e.target.value)} />
+            </Field>
+            <Field label="Labels" hint="Comma-separated key=value pairs, e.g. kind=hypothesis, env=prod. Used to select workers, e.g. worker_list's label_selector.">
+              <Input value={form.labels} placeholder="kind=hypothesis, env=prod" onChange={(e) => set('labels', e.target.value)} />
             </Field>
             <Field label="Why" hint="Recorded with this version.">
               <Input value={why} placeholder="Why this change" onChange={(e) => setWhy(e.target.value)} />

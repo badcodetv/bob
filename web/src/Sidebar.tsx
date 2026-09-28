@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChevronDownIcon, ClockIcon, FolderOpenIcon, LayoutGridIcon, PlusIcon, UsersIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Project, Session, Worker } from './api'
@@ -6,6 +6,72 @@ import type { Page } from './App'
 import { engineName, Menu, MenuItem, when, WorkerBadge } from './ui'
 
 const SHOWN_CHATS = 5
+
+/** One requirement of a parsed label selector (mirrors the server's labels package). */
+type Requirement =
+  | { op: 'equals' | 'notEquals'; key: string; value: string }
+  | { op: 'in' | 'notIn'; key: string; values: string[] }
+  | { op: 'exists' | 'notExists'; key: string }
+
+/**
+ * Parses a label selector: `k=v`, `k!=v`, `k in (a,b)`, `k notin (a)`, `k` / `exists k`, `!k`,
+ * comma-separated terms ANDed together. Throws a readable Error on a malformed selector — the
+ * same grammar as `api/internal/labels`, evaluated client-side against a worker's labels so the
+ * sidebar's list can filter without a round trip.
+ */
+function parseSelector(s: string): Requirement[] {
+  const trimmed = s.trim()
+  if (!trimmed) return []
+  const terms = splitTopLevel(trimmed)
+  return terms.map(parseTerm)
+}
+
+function splitTopLevel(s: string): string[] {
+  const terms: string[] = []
+  let depth = 0, start = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '(') depth++
+    else if (c === ')') { depth--; if (depth < 0) throw new Error('selector: unmatched )') }
+    else if (c === ',' && depth === 0) { terms.push(s.slice(start, i)); start = i + 1 }
+  }
+  if (depth !== 0) throw new Error('selector: unterminated (')
+  terms.push(s.slice(start))
+  const trimmedTerms = terms.map((t) => t.trim())
+  if (trimmedTerms.some((t) => !t)) throw new Error('selector: empty term')
+  return trimmedTerms
+}
+
+function parseTerm(term: string): Requirement {
+  let m: RegExpMatchArray | null
+  if ((m = term.match(/^!\s*(\S+)$/))) return { op: 'notExists', key: m[1] }
+  if ((m = term.match(/^exists\s+(\S+)$/))) return { op: 'exists', key: m[1] }
+  if ((m = term.match(/^(\S+)\s+in\s*\(([^)]*)\)$/))) return { op: 'in', key: m[1], values: splitValues(m[2]) }
+  if ((m = term.match(/^(\S+)\s+notin\s*\(([^)]*)\)$/))) return { op: 'notIn', key: m[1], values: splitValues(m[2]) }
+  if ((m = term.match(/^([^!=\s]+)\s*!=\s*(\S+)$/))) return { op: 'notEquals', key: m[1], value: m[2] }
+  if ((m = term.match(/^([^!=\s]+)\s*=\s*(\S+)$/))) return { op: 'equals', key: m[1], value: m[2] }
+  if (!/\s/.test(term)) return { op: 'exists', key: term }
+  throw new Error(`selector: could not parse "${term}"`)
+}
+
+function splitValues(s: string): string[] {
+  const vals = s.split(',').map((v) => v.trim()).filter(Boolean)
+  if (vals.length === 0) throw new Error('selector: ( ) needs at least one value')
+  return vals
+}
+
+function matchesSelector(labels: Record<string, string>, reqs: Requirement[]): boolean {
+  return reqs.every((r) => {
+    switch (r.op) {
+      case 'equals': return labels[r.key] === r.value
+      case 'notEquals': return labels[r.key] !== r.value
+      case 'in': return r.values.includes(labels[r.key])
+      case 'notIn': return !r.values.includes(labels[r.key])
+      case 'exists': return Object.hasOwn(labels, r.key)
+      case 'notExists': return !Object.hasOwn(labels, r.key)
+    }
+  })
+}
 
 export function Sidebar({ email, projects, project, workers, sessions, currentSession, currentWorker, page, onSignOut }: {
   email: string
@@ -22,12 +88,28 @@ export function Sidebar({ email, projects, project, workers, sessions, currentSe
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t) }, [])
 
+  // A selector box above the worker groups filters them by label, client-side (the labels are
+  // already in `workers`). An unparsable selector is shown as an error and does not filter.
+  const [selectorText, setSelectorText] = useState('')
+  const { selectorReqs, selectorError } = useMemo(() => {
+    try {
+      return { selectorReqs: parseSelector(selectorText), selectorError: null as string | null }
+    } catch (e) {
+      return { selectorReqs: null, selectorError: (e as Error).message }
+    }
+  }, [selectorText])
+
   // Every current worker, then any worker that only survives in old chats. Plain chats
   // (worker === '') are not a worker at all — they get their own "Chat" group below, not a
-  // "removed worker" group.
-  const groups = (workers ?? []).map((w) => ({ name: w.name, engine: w.engine, gone: false }))
+  // "removed worker" group. A removed worker's labels are gone with it, so a selector always
+  // excludes those groups.
+  const workerLabels = new Map((workers ?? []).map((w) => [w.name, w.labels]))
+  let groups = (workers ?? []).map((w) => ({ name: w.name, engine: w.engine, gone: false }))
   for (const s of sessions) {
     if (s.worker !== '' && !groups.some((g) => g.name === s.worker)) groups.push({ name: s.worker, engine: s.engine, gone: true })
+  }
+  if (selectorReqs && selectorReqs.length > 0) {
+    groups = groups.filter((g) => !g.gone && matchesSelector(workerLabels.get(g.name) ?? {}, selectorReqs!))
   }
   const plainChats = sessions.filter((s) => s.worker === '').sort((a, b) => Number(!a.messages) - Number(!b.messages))
 
@@ -75,6 +157,16 @@ export function Sidebar({ email, projects, project, workers, sessions, currentSe
             <ChatList groupKey="__plain" chats={plainChats} project={project} currentSession={currentSession}
               expanded={expanded} setExpanded={setExpanded} />
           </section>
+        )}
+
+        {project && workers && workers.length > 0 && (
+          <div className="flex flex-col gap-1 px-2">
+            <input value={selectorText} onChange={(e) => setSelectorText(e.target.value)}
+              placeholder="Filter workers by label, e.g. kind=hypothesis"
+              aria-label="Filter workers by label selector"
+              className="border-input placeholder:text-faint h-7 rounded-md border bg-transparent px-2 text-[12.5px]" />
+            {selectorError && <span className="text-destructive text-[11.5px]">{selectorError}</span>}
+          </div>
         )}
 
         {project && groups.map((g) => {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	neturl "net/url"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -76,8 +77,9 @@ func TestFreshDatabaseIsTheBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := collect(rows, func(r pgx.Row) (string, error) { var n string; return n, r.Scan(&n) })
-	if err != nil || len(applied) != 1 || applied[0] != "001_baseline.sql" {
-		t.Errorf("migrations = %v, %v; want [001_baseline.sql]", applied, err)
+	wantMigrations := []string{"001_baseline.sql", "002_worker_labels.sql"}
+	if err != nil || !reflect.DeepEqual(applied, wantMigrations) {
+		t.Errorf("migrations = %v, %v; want %v", applied, err, wantMigrations)
 	}
 	rows, err = st.db.Query(t.Context(), `SELECT table_name FROM information_schema.tables
 		WHERE table_schema = 'public' AND table_name <> 'schema_migrations' ORDER BY table_name`)
