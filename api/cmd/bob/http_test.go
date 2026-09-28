@@ -43,10 +43,10 @@ func TestTurnCarriesTheWorkersSettings(t *testing.T) {
 		return fmt.Sprintf("%s %s %s/%s %q %q %q %s %s <%s>", x.SessionID, x.Engine, x.Model, x.Effort, x.Tools, x.SystemPrompt, x.MCPToken, x.Text, x.UserName, x.UserEmail)
 	}
 	prompt := fmt.Sprintf("%q", composePrompt(bobNote("wolf"), "", "Research the market."))
-	if want := fmt.Sprintf(`%s claude opus/high ["Read" "Bash(git:*)"] %s "" hello Kai <kai@example.com>`, own.ID, prompt); got(0) != want {
+	if want := fmt.Sprintf(`%s claude opus/high ["Read" "Bash(git:*)"] %s %q hello Kai <kai@example.com>`, own.ID, prompt, mcpToken(a.auth.Secret, own.ID)); got(0) != want {
 		t.Errorf("turn on the worker's settings:\n got %s\nwant %s", got(0), want)
 	}
-	if want := fmt.Sprintf(`%s claude sonnet/low ["Read" "Bash(git:*)"] %s "" hello Kai <kai@example.com>`, overridden.ID, prompt); got(1) != want {
+	if want := fmt.Sprintf(`%s claude sonnet/low ["Read" "Bash(git:*)"] %s %q hello Kai <kai@example.com>`, overridden.ID, prompt, mcpToken(a.auth.Secret, overridden.ID)); got(1) != want {
 		t.Errorf("turn with the chat's overrides:\n got %s\nwant %s", got(1), want)
 	}
 	if turns[1].Resume != "" {

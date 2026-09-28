@@ -14,7 +14,7 @@
 //	BOB_RUNTIME_HOSTS  local development only: project=host:port,… when Bob runs on the host and
 //	                   cannot resolve container names
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
-//	BOB_SESSION_SECRET signs session cookies (required)
+//	BOB_SESSION_SECRET signs session cookies and each chat's MCP token (required)
 //	BOB_PROJECT_MAP    who may sign in and which projects they use (required), JSON:
 //	                   {"kai@example.com": ["*"], "tester@example.com": ["wolf"]}; "*" = admin
 //	BOB_PROJECT_MAP_FILE the same map read from a file (BOB_PROJECT_MAP wins)
@@ -37,6 +37,7 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
+	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
 )
@@ -98,6 +99,7 @@ func main() {
 		store:     st,
 		broker:    broker.New(),
 		runtime:   runtime.NewManager(runtime.Config{Hosts: hosts, Tokens: tokens}),
+		mcp:       mcp.New(),
 		turns:     map[string]context.CancelFunc{},
 		now:       time.Now,
 	}

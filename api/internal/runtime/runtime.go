@@ -116,7 +116,7 @@ type TurnRequest struct {
 	Tools []string `json:"tools,omitempty"`
 	// SystemPrompt is appended to the harness's own; always sent, even when empty.
 	SystemPrompt string `json:"system_prompt"`
-	// MCPToken is the chat's bearer token for Bob's MCP server; empty until Bob serves one.
+	// MCPToken is the chat's bearer token for Bob's MCP server (POST /mcp).
 	MCPToken string `json:"mcp_token"`
 	Text     string `json:"text"`
 	Resume   string `json:"resume,omitempty"`

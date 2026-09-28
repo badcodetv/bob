@@ -248,6 +248,18 @@ func (s *Store) Events(ctx context.Context, sessionID string, after int64) ([]Ev
 	})
 }
 
+// LastUserEmail is who sent a session's latest message (its bob.user_message's user_email:
+// a person's email, or "schedule:<id>"), or "" before the first.
+func (s *Store) LastUserEmail(ctx context.Context, sessionID string) (string, error) {
+	var email string
+	err := s.db.QueryRow(ctx, `SELECT COALESCE(payload->>'user_email', '') FROM events
+		WHERE session_id = $1 AND kind = 'bob.user_message' ORDER BY id DESC LIMIT 1`, sessionID).Scan(&email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return email, err
+}
+
 func collect[T any](rows pgx.Rows, scan func(pgx.Row) (T, error)) ([]T, error) {
 	defer rows.Close()
 	out := []T{}

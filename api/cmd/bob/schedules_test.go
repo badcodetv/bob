@@ -168,7 +168,7 @@ func newScheduleApp(t *testing.T) (*app, *fakeRuntime, *clock) {
 	srv := httptest.NewServer(rt)
 	t.Cleanup(srv.Close)
 	c := &clock{t: time.Now()}
-	a := &app{store: st, broker: broker.New(), runtime: fakeContainers{srv.URL}, now: c.now, turns: map[string]context.CancelFunc{}}
+	a := &app{auth: &auth.Auth{Secret: []byte("0123456789abcdef")}, store: st, broker: broker.New(), runtime: fakeContainers{srv.URL}, now: c.now, turns: map[string]context.CancelFunc{}}
 	if err := st.ReconcileProjects(t.Context(), []string{"wolf"}); err != nil {
 		t.Fatal(err)
 	}

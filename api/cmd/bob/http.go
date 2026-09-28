@@ -19,6 +19,7 @@ import (
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/engines"
+	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
 )
@@ -39,6 +40,7 @@ type app struct {
 	store     *store.Store
 	broker    *broker.Broker
 	runtime   containers
+	mcp       *mcp.Server // the tools agents call back into Bob with (POST /mcp)
 	now       func() time.Time
 
 	mu        sync.Mutex
@@ -128,6 +130,13 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	mux.HandleFunc("POST /api/logout", a.logout)
 	mux.HandleFunc("GET /api/view/{token}", a.viewFile)
 	mux.HandleFunc("GET /api/view/{token}/{path...}", a.viewFile)
+	// /mcp takes no cookie: the chat's MCP token is the credential (mcp.go). Every method reaches
+	// the handler, which answers GET with 405 as the MCP transport expects.
+	tools := a.mcp
+	if tools == nil {
+		tools = mcp.New()
+	}
+	mux.Handle("/mcp", tools.Handler(a.mcpCaller))
 	mux.Handle("/api/", a.requireLogin(api))
 	if a.webDir != "" {
 		mux.Handle("/", spa(a.webDir))
@@ -559,7 +568,8 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 // fresh each turn: the Bob environment note, the project prompt, and (for a worker chat) the
 // worker's prompt — so a change to any of them takes effect on the next message.
 func (a *app) turnRequest(ctx context.Context, sess store.Session) (runtime.TurnRequest, error) {
-	t := runtime.TurnRequest{SessionID: sess.ID, Engine: sess.Engine, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort}
+	t := runtime.TurnRequest{SessionID: sess.ID, Engine: sess.Engine, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort,
+		MCPToken: mcpToken(a.auth.Secret, sess.ID)}
 	p, err := a.store.Project(ctx, sess.Project)
 	if err != nil {
 		return t, err

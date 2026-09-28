@@ -807,7 +807,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `{"error":"this chat's worker was deleted; start a new chat"}`, confirming the server-side half
   T7 relies on (already true before this ticket — T7 only makes the web read it).
 
-### T8: MCP server in the API   [Status: pending | Model: opus]
+### T8: MCP server in the API   [Status: done | Model: opus]
 - **Scope:** `api/internal/mcp/server.go` per Interfaces → MCP: JSON-RPC 2.0 over POST —
   `initialize` (protocolVersion `2025-06-18`, capabilities `{tools:{}}`, serverInfo
   `{name:"bob"}`), `notifications/initialized` (202, empty body), `ping`, `tools/list` (only tools
@@ -826,8 +826,22 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes.
 - **Validation:** `./stack test` → "all green".
 - **Depends on:** T1
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) Implemented as scoped. `internal/mcp/server.go`: `Caller`, `Tool`, `New`,
+  `Register` (panics on a nameless/Call-less or duplicate tool), `Handler`; auth errors are
+  `mcp.ErrUnauthorized` → 401 (+ `WWW-Authenticate: Bearer`) and `mcp.ErrNoSession` → 404, others
+  500. Also: malformed JSON → -32700 (id null), unknown method → -32601, body over 8 MiB → -32600,
+  any request without an id → 202. `serverInfo` also carries `version: "1"` (the MCP spec requires
+  it; strict clients reject its absence). `/mcp` is mounted as `"/mcp"` (every method) on the outer
+  mux so the handler itself answers GET with 405. `app.mcp` holds the server (`mcp.New()` in
+  `main.go`; `mux` falls back to an empty one for tests). `turnRequest` sets `MCPToken`; the
+  expectation in `TestTurnCarriesTheWorkersSettings` changed from `""` to the minted token, and
+  `newScheduleApp` now sets `a.auth` (a secret to mint with). Tests: `internal/mcp/server_test.go`
+  (initialize, notification 202, ping, tools/list filtering, call result/isError, -32602 for
+  unknown and unavailable tools, -32601/-32700/-32600, 401/404/405, duplicate register) and
+  `cmd/bob/mcp_test.go` (`TestMCPToken`, `TestMCPCaller`, `TestMCPRefusesBadTokens`,
+  `TestTurnCarriesTheMCPToken`). After `./stack restart`, `curl -X POST :8070/mcp -d '{}'` → 401;
+  `GET /mcp` → 405.
 
 ### T9: Runtime gives Claude the Bob MCP server   [Status: pending | Model: sonnet]
 - **Scope:** `runtime/src/mcp.ts` exports `bobMcp` (Interfaces). `claude.ts` passes
@@ -1312,3 +1326,10 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   defines its own local `codexEfforts` list (`minimal, low, medium, high, xhigh`, matching
   `workers.go`'s `codexEfforts` map) rather than importing one; model stays a free-text field for
   both engines since there's no codex model list to offer either.
+- **T8 (small scope addition):** `Caller.User` needs the email on a session's latest
+  `bob.user_message`; rather than read every event of the chat on each tool call, the store gained
+  one read, `store.LastUserEmail(ctx, sessionID)` (`api/internal/store/store.go`), a single
+  `ORDER BY id DESC LIMIT 1` query. Scheduled turns already record `user_email: "schedule:<id>"`
+  on their `bob.user_message` (`schedules.go` → `startTurn`), so no special case was needed. A
+  chat with no message yet gives `User: ""` (cannot happen in practice: a turn records its message
+  before it runs).
