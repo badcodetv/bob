@@ -176,11 +176,11 @@ func (a *app) listSchedules(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"schedules": views, "paused": paused}, nil)
 }
 
-// scheduleBody is a schedule as the API accepts it; absent fields keep their value on PATCH.
-// The worker is named by its id until workers have routes of their own to look one up by name.
+// scheduleBody is a schedule as the API accepts it; absent fields keep their value on PATCH. The
+// worker is named, and resolved to its id by createSchedule/updateSchedule (400 if unknown).
 type scheduleBody struct {
 	Name         *string `json:"name"`
-	WorkerID     *string `json:"worker_id"`
+	Worker       *string `json:"worker"`
 	Cron         *string `json:"cron"`
 	Timezone     *string `json:"timezone"`
 	Message      *string `json:"message"`
@@ -195,7 +195,6 @@ func (b scheduleBody) apply(x *store.Schedule) {
 		}
 	}
 	set(&x.Name, b.Name)
-	set(&x.WorkerID, b.WorkerID)
 	set(&x.Cron, b.Cron)
 	set(&x.Timezone, b.Timezone)
 	if b.Message != nil {
@@ -231,8 +230,16 @@ func (a *app) createSchedule(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	x := store.Schedule{Project: r.PathValue("project"), Timezone: "UTC", Enabled: true, KeepSessions: 30}
+	project := r.PathValue("project")
+	x := store.Schedule{Project: project, Timezone: "UTC", Enabled: true, KeepSessions: 30}
 	body.apply(&x)
+	if body.Worker != nil {
+		id, ok := a.findWorkerID(w, r, project, *body.Worker)
+		if !ok {
+			return
+		}
+		x.WorkerID = id
+	}
 	if err := validSchedule(x); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -253,6 +260,13 @@ func (a *app) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	before := x
 	body.apply(&x)
+	if body.Worker != nil {
+		id, ok := a.findWorkerID(w, r, x.Project, *body.Worker)
+		if !ok {
+			return
+		}
+		x.WorkerID = id
+	}
 	if err := validSchedule(x); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -42,10 +42,11 @@ func TestTurnCarriesTheWorkersSettings(t *testing.T) {
 		x := turns[i]
 		return fmt.Sprintf("%s %s %s/%s %q %q %q %s %s <%s>", x.SessionID, x.Engine, x.Model, x.Effort, x.Tools, x.SystemPrompt, x.MCPToken, x.Text, x.UserName, x.UserEmail)
 	}
-	if want := own.ID + ` claude opus/high ["Read" "Bash(git:*)"] "Research the market." "" hello Kai <kai@example.com>`; got(0) != want {
+	prompt := fmt.Sprintf("%q", composePrompt(bobNote("wolf"), "", "Research the market."))
+	if want := fmt.Sprintf(`%s claude opus/high ["Read" "Bash(git:*)"] %s "" hello Kai <kai@example.com>`, own.ID, prompt); got(0) != want {
 		t.Errorf("turn on the worker's settings:\n got %s\nwant %s", got(0), want)
 	}
-	if want := overridden.ID + ` claude sonnet/low ["Read" "Bash(git:*)"] "Research the market." "" hello Kai <kai@example.com>`; got(1) != want {
+	if want := fmt.Sprintf(`%s claude sonnet/low ["Read" "Bash(git:*)"] %s "" hello Kai <kai@example.com>`, overridden.ID, prompt); got(1) != want {
 		t.Errorf("turn with the chat's overrides:\n got %s\nwant %s", got(1), want)
 	}
 	if turns[1].Resume != "" {
@@ -65,8 +66,8 @@ func TestTurnOnADeletedWorkerFails(t *testing.T) {
 	execSQL(t, a.store, `DELETE FROM workers WHERE id = $1`, id)
 	sess, _ = a.store.Session(t.Context(), sess.ID)
 	err = a.runTurn(t.Context(), sess, auth.User{Email: "kai@example.com"}, "hello")
-	if err == nil || !strings.Contains(err.Error(), `worker "researcher" has been deleted`) {
-		t.Errorf("err = %v, want the worker named as deleted", err)
+	if err == nil || !strings.Contains(err.Error(), "this chat's worker was deleted") {
+		t.Errorf("err = %v, want the deleted-worker refusal", err)
 	}
 	if turns, _ := rt.sent(); len(turns) != 0 {
 		t.Errorf("runtime was sent %+v", turns)

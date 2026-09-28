@@ -51,6 +51,21 @@ func TestRouteAccess(t *testing.T) {
 		{tester, "POST", "/api/projects/enc/sessions", 404},
 		{tester, "POST", "/api/projects/wolf/sync", 404}, // gone: workers are not in git any more
 
+		{tester, "GET", "/api/projects/wolf/workers", 200},
+		{tester, "GET", "/api/projects/enc/workers", 404},
+		{tester, "POST", "/api/projects/wolf/workers", 200},
+		{tester, "POST", "/api/projects/enc/workers", 404},
+		{tester, "PATCH", "/api/projects/wolf/workers/researcher", 200},
+		{tester, "PATCH", "/api/projects/enc/workers/researcher", 404},
+		{tester, "DELETE", "/api/projects/wolf/workers/researcher", 200},
+		{tester, "DELETE", "/api/projects/enc/workers/researcher", 404},
+		{tester, "GET", "/api/projects/wolf/workers/researcher/versions", 200},
+		{tester, "GET", "/api/projects/enc/workers/researcher/versions", 404},
+		{tester, "GET", "/api/projects/wolf/prompt", 200},
+		{tester, "GET", "/api/projects/enc/prompt", 404},
+		{tester, "PUT", "/api/projects/wolf/prompt", 200},
+		{tester, "PUT", "/api/projects/enc/prompt", 404},
+
 		{tester, "GET", "/api/sessions/wolf-chat", 200},
 		{tester, "GET", "/api/sessions/enc-chat", 404},
 		{tester, "GET", "/api/sessions/no-such-chat", 404},

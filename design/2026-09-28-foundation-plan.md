@@ -655,7 +655,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   uses `errors.As` against `*pgconn.PgError` (code `23505`), matching store.go's existing error
   style. `./stack test` all green; `go vet ./...` clean.
 
-### T5: API — worker routes, prompt composition, plain chats   [Status: pending | Model: sonnet]
+### T5: API — worker routes, prompt composition, plain chats   [Status: done | Model: sonnet]
 - **Scope:** Add the worker and prompt routes (Interfaces → API HTTP) in `api/cmd/bob/workers.go`,
   registered in `http.go:92-116` with policy `member`; the signed-in email is `by`. Shared
   validation `validWorker(store.Worker) error`: name regex; engine `claude|codex`; effort per
@@ -682,8 +682,25 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes — using the fake `containers` the tests already use.
 - **Validation:** `./stack test` → "all green".
 - **Depends on:** T2, T3, T4
-- [ ] done
-- Notes:
+- [x] done
+- Notes: Implemented as scoped. `api/cmd/bob/workers.go` holds `validWorker`, the moved
+  `validSettings(w, engine, model, effort)` and `modelName`-sharing worker/session validation, plus
+  the worker and project-prompt HTTP handlers; `api/cmd/bob/prompt.go` holds `bobNote` and
+  `composePrompt`. `turnRequest` (`http.go`) now composes `bobNote + project prompt (+ worker
+  prompt)` every turn and refuses (`bob.turn_failed`, no runtime call) both when the worker was
+  deleted ("this chat's worker was deleted; start a new chat") and when the worker's engine no
+  longer matches the session's ("this chat's worker now runs on <engine>; start a new chat").
+  `createSession` takes `worker: ""` + required `engine` for a plain chat, otherwise resolves the
+  worker and validates settings against its engine. Schedule create/update accept `worker` (a
+  name, replacing `worker_id` in the request body) and resolve it via `findWorkerID`, 400 on an
+  unknown name. `reply` maps `store.ErrConflict` to 409. Updated the two existing T2/T4 turn tests
+  in `http_test.go` to the new composed prompt and refusal wording. New tests:
+  `cmd/bob/prompt_test.go` (bobNote exact text, composePrompt), `cmd/bob/workers_test.go` (CRUD +
+  versions, duplicate → 409, validation matrix incl. per-engine effort and claude-only tools,
+  project prompt GET/PUT, plain chat requires engine, codex effort `minimal` accepted, engine-changed
+  refusal, schedule worker-name resolution incl. 400 on unknown), and guard rows in
+  `access_test.go` for every new route. Validation: `go vet ./...` clean; `./stack test` → "all
+  green"; full `go test ./... -v` (with `BOB_TEST_DATABASE_URL`) shows no SKIP/FAIL.
 
 ### T6: Web — workers page, editor, history, project prompt   [Status: pending | Model: sonnet]
 - **Scope:** Remove git from the UI: `SyncStatus` and the "No workers yet… git" text
@@ -1222,3 +1239,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   API image, `deploy/compose.yml` (`127.0.0.1:8100:8070`, `BOB_API_URL: http://api:8070`),
   `deploy/compose.dev.yml`, `./stack` and the Vite proxy. Caddy is unaffected (it targets host
   port 8100). T3's text above still says 8090; read it as 8070.
+- **T5 (small scope note):** `GET /api/projects/{project}/workers/{name}/versions` resolves the
+  worker by name first (`a.store.Worker`), so it 404s once the worker is deleted, even though
+  `store.WorkerVersions` itself works after deletion (no FK to `workers`, by design). T6's worker
+  history UI reads versions of a *live* worker only, so this is fine for T5's and T6's scope as
+  written; flagging in case a later ticket wants a deleted worker's history reachable (e.g. by
+  worker id instead of by project+name).

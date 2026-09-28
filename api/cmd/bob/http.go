@@ -94,6 +94,13 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("GET /api/projects/{project}", member, a.getProject)
 	handle("GET /api/projects/{project}/sessions", member, a.listSessions)
 	handle("POST /api/projects/{project}/sessions", member, a.createSession)
+	handle("GET /api/projects/{project}/workers", member, a.listWorkers)
+	handle("POST /api/projects/{project}/workers", member, a.createWorker)
+	handle("PATCH /api/projects/{project}/workers/{worker}", member, a.updateWorker)
+	handle("DELETE /api/projects/{project}/workers/{worker}", member, a.deleteWorker)
+	handle("GET /api/projects/{project}/workers/{worker}/versions", member, a.workerVersions)
+	handle("GET /api/projects/{project}/prompt", member, a.getProjectPrompt)
+	handle("PUT /api/projects/{project}/prompt", member, a.setProjectPrompt)
 	handle("GET /api/sessions/{session}", member, a.getSession)
 	handle("PATCH /api/sessions/{session}", member, a.updateSession)
 	handle("DELETE /api/sessions/{session}", member, a.deleteSession)
@@ -265,12 +272,26 @@ func (a *app) listSessions(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]any{"sessions": ss}, err)
 }
 
+// createSession starts a chat. With a worker name, it looks the worker up (400 if unknown) and
+// takes its engine; with worker: "" it is a plain chat and the engine is required.
 func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
-	var body struct{ Worker, Model, Effort string }
-	if !decode(w, r, &body) || !validSettings(w, body.Model, body.Effort) {
+	var body struct{ Worker, Engine, Model, Effort string }
+	if !decode(w, r, &body) {
 		return
 	}
 	project := r.PathValue("project")
+	if body.Worker == "" {
+		if body.Engine != "claude" && body.Engine != "codex" {
+			http.Error(w, "engine must be claude or codex", http.StatusBadRequest)
+			return
+		}
+		if !validSettings(w, body.Engine, body.Model, body.Effort) {
+			return
+		}
+		s, err := a.store.CreateSession(r.Context(), project, nil, "", body.Engine, body.Model, body.Effort)
+		reply(w, s, err)
+		return
+	}
 	wk, err := a.store.Worker(r.Context(), project, body.Worker)
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, fmt.Sprintf("project %s has no worker named %q", project, body.Worker), http.StatusBadRequest)
@@ -278,6 +299,9 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		reply(w, nil, err)
+		return
+	}
+	if !validSettings(w, wk.Engine, body.Model, body.Effort) {
 		return
 	}
 	s, err := a.store.CreateSession(r.Context(), project, &wk.ID, wk.Name, wk.Engine, body.Model, body.Effort)
@@ -291,10 +315,18 @@ func (a *app) getSession(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) updateSession(w http.ResponseWriter, r *http.Request) {
 	var body struct{ Model, Effort string }
-	if !decode(w, r, &body) || !validSettings(w, body.Model, body.Effort) {
+	if !decode(w, r, &body) {
 		return
 	}
-	s, err := a.store.SetSessionSettings(r.Context(), r.PathValue("session"), body.Model, body.Effort)
+	sess, err := a.store.Session(r.Context(), r.PathValue("session"))
+	if err != nil {
+		reply(w, nil, err)
+		return
+	}
+	if !validSettings(w, sess.Engine, body.Model, body.Effort) {
+		return
+	}
+	s, err := a.store.SetSessionSettings(r.Context(), sess.ID, body.Model, body.Effort)
 	reply(w, s, err)
 }
 
@@ -314,19 +346,8 @@ func (a *app) removeSession(ctx context.Context, sess store.Session) error {
 	return a.store.DeleteSession(ctx, sess.ID)
 }
 
+// modelName and validSettings are in workers.go, shared with worker validation.
 var modelName = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]{0,100}$`)
-
-func validSettings(w http.ResponseWriter, model, effort string) bool {
-	switch {
-	case !modelName.MatchString(model):
-		http.Error(w, "model: letters, digits and . _ : / [ ] - only", http.StatusBadRequest)
-	case effort != "" && effort != "low" && effort != "medium" && effort != "high" && effort != "xhigh" && effort != "max":
-		http.Error(w, "effort must be low, medium, high, xhigh or max", http.StatusBadRequest)
-	default:
-		return true
-	}
-	return false
-}
 
 func (a *app) listEvents(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
@@ -534,19 +555,28 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 }
 
 // turnRequest is what a session's next turn runs with: its worker's engine, tools and prompt, and
-// the session's model and effort where they override the worker's. The system prompt is the
-// worker's prompt alone until Bob composes one (the environment note and the project prompt too).
+// the session's model and effort where they override the worker's. The system prompt is composed
+// fresh each turn: the Bob environment note, the project prompt, and (for a worker chat) the
+// worker's prompt — so a change to any of them takes effect on the next message.
 func (a *app) turnRequest(ctx context.Context, sess store.Session) (runtime.TurnRequest, error) {
 	t := runtime.TurnRequest{SessionID: sess.ID, Engine: sess.Engine, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort}
+	p, err := a.store.Project(ctx, sess.Project)
+	if err != nil {
+		return t, err
+	}
 	if sess.WorkerID == nil {
 		if sess.Worker != "" {
-			return t, fmt.Errorf("worker %q has been deleted; this chat can be read but takes no more messages", sess.Worker)
+			return t, fmt.Errorf("this chat's worker was deleted; start a new chat")
 		}
+		t.SystemPrompt = composePrompt(bobNote(sess.Project), p.Prompt)
 		return t, nil // a plain chat: nothing but the session's own settings
 	}
 	wk, err := a.store.WorkerByID(ctx, *sess.WorkerID)
 	if err != nil {
 		return t, fmt.Errorf("worker %q: %w", sess.Worker, err)
+	}
+	if wk.Engine != sess.Engine {
+		return t, fmt.Errorf("this chat's worker now runs on %s; start a new chat", wk.Engine)
 	}
 	if t.Model == "" {
 		t.Model = wk.Model
@@ -554,7 +584,7 @@ func (a *app) turnRequest(ctx context.Context, sess store.Session) (runtime.Turn
 	if t.Effort == "" {
 		t.Effort = wk.Effort
 	}
-	t.Tools, t.SystemPrompt = wk.Tools, wk.Prompt
+	t.Tools, t.SystemPrompt = wk.Tools, composePrompt(bobNote(sess.Project), p.Prompt, wk.Prompt)
 	return t, nil
 }
 
@@ -578,6 +608,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func reply(w http.ResponseWriter, v any, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	if err != nil {
