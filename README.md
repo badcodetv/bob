@@ -59,7 +59,7 @@ next message. A project without one is fine; it simply has no shared preamble.
 ```sh
 scripts/import-agent-bob-env          # once: reuse agent-bob's .env values (never printed)
 ./stack build                         # runtime image, web packages, API builds
-./stack start                         # Postgres, a container per project, API :8090, UI :8080
+./stack start                         # Postgres, a container per project, API :8070, UI :8080
 ```
 
 `./stack` on its own lists the rest: `stop`, `restart`, `status`, `logs`, `psql`, `sql`, `test`,

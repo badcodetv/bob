@@ -271,7 +271,7 @@ Deleted: `BOB_PROJECTS_FILE`, `BOB_RUNTIME_KEY`. Every API variable must be **na
 `deploy/compose.yml`'s `api` service**, or the box API never sees it.
 
 **Project container**: `BOB_PROJECT_NAME`, `BOB_RUNTIME_TOKEN`, `BOB_API_URL`
-(`http://api:8090` on the box, `http://host.docker.internal:8090` on the laptop),
+(`http://api:8070` on the box, `http://host.docker.internal:8070` on the laptop),
 `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN` (box: from `GITHUB_TOKEN_<NAME>`; laptop: plain
 `GITHUB_TOKEN`), plus project-specific ones (`FRED_API_KEY` for wolf). Deleted: `BOB_REPO_URL`,
 `BOB_REPO_REF`, `BOB_REPO_SUBFOLDER`, `BOB_RUNTIME_KEY`.
@@ -888,7 +888,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `drive_fetch` (Interfaces), each with `Available` = the caller's project has a Drive client.
   `drive_read` pages text by `offset`/`limit`. `drive_fetch` builds
   `url = c.APIBase + "/drive/fetch/" + token`, where `APIBase` is the scheme `http` plus the `Host`
-  header of the `/mcp` request (so `api:8090` on the box, `host.docker.internal:8090` on the
+  header of the `/mcp` request (so `api:8070` on the box, `host.docker.internal:8070` on the
   laptop) — never `BOB_PUBLIC_URL`. Token = base64url(`project|fileID|expUnix`) + `.` +
   hex(HMAC-SHA256(BOB_SESSION_SECRET, `"drive-fetch\x00"` + payload)), expiry 10 minutes.
   `api/cmd/bob/drivefetch.go`: `GET /drive/fetch/{token}` outside `requireLogin` — verify the HMAC
@@ -1218,3 +1218,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   8090 (it is also the port `BOB_API_URL` in `deploy/compose.dev.yml` and the Vite proxy use).
   (Orchestrator correction of the executor's first wording, which called this another tenant of a
   sandbox and said Kai's laptop would not have it.)
+  **Resolved (Kai, 2026-09-28):** Bob's API port is 8070 everywhere — the `BOB_ADDR` default, the
+  API image, `deploy/compose.yml` (`127.0.0.1:8100:8070`, `BOB_API_URL: http://api:8070`),
+  `deploy/compose.dev.yml`, `./stack` and the Vite proxy. Caddy is unaffected (it targets host
+  port 8100). T3's text above still says 8090; read it as 8070.

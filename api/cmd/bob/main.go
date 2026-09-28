@@ -10,7 +10,7 @@
 //	                   (openssl rand -hex 32).
 //	BOB_PUBLIC_URL     where people reach Bob, no trailing slash (required), e.g.
 //	                   https://bob.box.badcode.tv; for links to chats
-//	BOB_ADDR           listen address (default :8090)
+//	BOB_ADDR           listen address (default :8070)
 //	BOB_RUNTIME_HOSTS  local development only: project=host:port,… when Bob runs on the host and
 //	                   cannot resolve container names
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
@@ -104,7 +104,7 @@ func main() {
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
 
-	srv := &http.Server{Addr: env("BOB_ADDR", ":8090"), Handler: app.routes()}
+	srv := &http.Server{Addr: env("BOB_ADDR", ":8070"), Handler: app.routes()}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)

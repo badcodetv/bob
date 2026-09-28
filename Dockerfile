@@ -18,6 +18,6 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /bob ./cmd/bob
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=api /bob /bob
 COPY --from=web /web/dist /web
-ENV BOB_WEB_DIR=/web BOB_ADDR=:8090
-EXPOSE 8090
+ENV BOB_WEB_DIR=/web BOB_ADDR=:8070
+EXPOSE 8070
 ENTRYPOINT ["/bob"]

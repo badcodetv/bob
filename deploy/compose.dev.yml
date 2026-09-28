@@ -16,7 +16,7 @@ services:
     environment:
       BOB_PROJECT_NAME: dev
       BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_DEV:?}
-      BOB_API_URL: http://host.docker.internal:8090
+      BOB_API_URL: http://host.docker.internal:8070
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
     extra_hosts:

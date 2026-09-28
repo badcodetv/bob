@@ -29,7 +29,7 @@ services:
       BOB_RUNTIME_TOKEN_ENC: ${BOB_RUNTIME_TOKEN_ENC:?}
     networks: [box-db, bob-projects]
     ports:
-      - "127.0.0.1:8100:8090"              # Caddy only
+      - "127.0.0.1:8100:8070"              # Caddy only
     mem_limit: 1g
 
   bob-project-enc:
@@ -40,7 +40,7 @@ services:
     environment:
       BOB_PROJECT_NAME: enc
       BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_ENC:?}
-      BOB_API_URL: http://api:8090
+      BOB_API_URL: http://api:8070
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?}
       GITHUB_TOKEN: ${GITHUB_TOKEN_ENC:?}
     volumes:

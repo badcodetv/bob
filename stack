@@ -3,7 +3,7 @@
 # ./stack — the local development stack for Bob.
 #
 #   ./stack build          build the runtime image and install the web app's packages
-#   ./stack start          Postgres, the "dev" project container, the API on :8090, the web app on :8080
+#   ./stack start          Postgres, the "dev" project container, the API on :8070, the web app on :8080
 #     [--attach]             ... and follow the logs here instead of returning
 #   ./stack stop           stop the API and the web app (Postgres is shared — it stays up)
 #   ./stack restart        stop, then start
@@ -36,7 +36,7 @@ API_LOG="$RUN/api.log"
 WEB_LOG="$RUN/web.log"
 API_PID="$RUN/api.pid"
 WEB_PID="$RUN/web.pid"
-API_URL=http://127.0.0.1:8090
+API_URL=http://127.0.0.1:8070
 WEB_URL=http://localhost:8080
 
 say() { printf '── %s\n' "$*"; }
