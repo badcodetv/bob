@@ -103,6 +103,7 @@ func main() {
 		turns:     map[string]context.CancelFunc{},
 		now:       time.Now,
 	}
+	app.mcp.Register(bobWhoami)
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
 

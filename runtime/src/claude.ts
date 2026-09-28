@@ -3,8 +3,9 @@
 // effort, tools and the system prompt — comes in the turn: Bob's API decided it.
 import { query, type EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import { turnEnv, type Turn, type TurnResult } from './turn.js';
+import { bobMcp } from './mcp.js';
 
-export async function runClaudeTurn(turn: Turn, emit: (event: unknown) => void, signal: AbortSignal): Promise<TurnResult> {
+export async function runClaudeTurn(turn: Turn, apiUrl: string, emit: (event: unknown) => void, signal: AbortSignal): Promise<TurnResult> {
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
 
@@ -22,6 +23,7 @@ export async function runClaudeTurn(turn: Turn, emit: (event: unknown) => void, 
       // worker prompt, composed by the API.
       systemPrompt: { type: 'preset', preset: 'claude_code', append: turn.systemPrompt },
       allowedTools: turn.tools,
+      mcpServers: { bob: { type: 'http', ...bobMcp(apiUrl, turn.mcpToken) } },
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,

@@ -107,6 +107,42 @@ func TestMCPCaller(t *testing.T) {
 	}
 }
 
+// bob_whoami is the one real tool registered by main.go; a chat calls it to learn its own scope.
+func TestBobWhoami(t *testing.T) {
+	a, _, _ := newScheduleApp(t)
+	a.mcp = mcp.New()
+	a.mcp.Register(bobWhoami)
+	id := researcherID[a]
+	worker, err := a.store.CreateSession(t.Context(), "wolf", &id, "researcher", "claude", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userMessage(t, a, worker, "kai@example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bob_whoami"}}`))
+	req.Host = "api:8070"
+	req.Header.Set("Authorization", "Bearer "+mcpToken(a.auth.Secret, worker.ID))
+	res := httptest.NewRecorder()
+	a.routes().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", res.Code, res.Body)
+	}
+	var r struct {
+		Result struct{ Content []struct{ Text string } }
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &r); err != nil || len(r.Result.Content) != 1 {
+		t.Fatalf("bob_whoami: %s", res.Body)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(r.Result.Content[0].Text), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"project": "wolf", "session": worker.ID, "worker": "researcher", "user": "kai@example.com"}
+	if got["project"] != want["project"] || got["session"] != want["session"] || got["worker"] != want["worker"] || got["user"] != want["user"] {
+		t.Errorf("bob_whoami = %+v, want %+v", got, want)
+	}
+}
+
 func TestMCPRefusesBadTokens(t *testing.T) {
 	a, _, _ := newScheduleApp(t)
 	a.mcp = mcp.New()

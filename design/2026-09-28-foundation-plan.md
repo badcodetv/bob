@@ -843,7 +843,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `TestTurnCarriesTheMCPToken`). After `./stack restart`, `curl -X POST :8070/mcp -d '{}'` → 401;
   `GET /mcp` → 405.
 
-### T9: Runtime gives Claude the Bob MCP server   [Status: pending | Model: sonnet]
+### T9: Runtime gives Claude the Bob MCP server   [Status: done | Model: sonnet]
 - **Scope:** `runtime/src/mcp.ts` exports `bobMcp` (Interfaces). `claude.ts` passes
   `mcpServers: { bob: { type: 'http', ...bobMcp(API_URL, turn.mcpToken) } }` to `query()`. Register
   `bob_whoami` in `api/cmd/bob/mcp.go` returning `{project, session, worker, user}`.
@@ -853,8 +853,23 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `cd runtime && rm -rf dist && npm run build && npm test` → pass; `./stack build &&
   ./stack restart`; the manual chat above.
 - **Depends on:** T3, T7, T8
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) `runtime/src/mcp.ts` + `mcp.test.ts` exactly as scoped (node:test, matching the
+  runtime's style — this repo doesn't use vitest). `runtime/src/claude.ts`'s `runClaudeTurn` now
+  takes `apiUrl` and passes `mcpServers: { bob: { type: 'http', ...bobMcp(apiUrl, turn.mcpToken) } }`
+  to `query()` (confirmed against the installed SDK's `sdk.d.ts`: `McpHttpServerConfig` is exactly
+  `{type:'http', url, headers?, tools?, timeout?, alwaysLoad?}`, so `{type:'http', ...bobMcp(...)}`
+  matches). `server.ts`'s `Driver` type and the one call site thread `API_URL` through to the driver
+  (it wasn't reaching `claude.ts` before). `api/cmd/bob/mcp.go`: `bobWhoami` (`mcp.Tool`) returns
+  `{project, session, worker, user}` from `Caller`; registered in `main.go` right after `mcp.New()`.
+  Go test `TestBobWhoami` (`cmd/bob/mcp_test.go`) calls it through `POST /mcp` with a minted token
+  and checks the JSON result. Manual e2e (no Google sign-in): a throwaway `/tmp` program signed a
+  `bob_session` cookie the same way `auth.Auth.sign` does (reading `BOB_SESSION_SECRET` from `.env`,
+  never printed), used it to create a plain claude chat on `dev` via the real API, sent "Call the
+  bob_whoami tool and tell me exactly what it returned.", and polled `GET /api/sessions/{id}/events`
+  until `bob.turn_done`. The transcript shows `mcp__bob__bob_whoami` called with `{}` and returning
+  `{"project":"dev","session":"<that chat's id>","user":"kaiyadavenport@gmail.com","worker":""}`,
+  which the model then quoted back verbatim — acceptance criterion met.
 
 ### T10: Worker MCP tools   [Status: pending | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_workers.go`: `worker_create`, `worker_update`, `worker_list`,

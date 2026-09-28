@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -56,4 +58,14 @@ func (a *app) mcpCaller(r *http.Request) (mcp.Caller, error) {
 		return mcp.Caller{}, err
 	}
 	return mcp.Caller{Project: sess.Project, SessionID: sess.ID, Worker: sess.Worker, User: user, APIBase: "http://" + r.Host}, nil
+}
+
+// bobWhoami lets an agent ask which chat it is running in: the tools it calls after this all
+// scope to the same project and session, since the token names them, not an argument.
+var bobWhoami = mcp.Tool{
+	Name:        "bob_whoami",
+	Description: "Returns the project, chat and worker this call is running in, and who it is running for.",
+	Call: func(_ context.Context, c mcp.Caller, _ json.RawMessage) (any, error) {
+		return map[string]string{"project": c.Project, "session": c.SessionID, "worker": c.Worker, "user": c.User}, nil
+	},
 }

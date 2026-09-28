@@ -25,7 +25,7 @@ import { parseTurn, type Turn, type TurnResult } from './turn.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const TOKEN = process.env.BOB_RUNTIME_TOKEN ?? '';
-// Where Bob's API is, for the MCP server each turn is given (from T9 on).
+// Where Bob's API is, for the MCP server each turn is given (mcp.ts).
 const API_URL = process.env.BOB_API_URL ?? '';
 // Nothing started from here (harnesses, their tools) inherits the token.
 delete process.env.BOB_RUNTIME_TOKEN;
@@ -44,7 +44,7 @@ let onDrained: (() => void) | null = null;
 const PROJECT_DIR = process.env.BOB_PROJECT_DIR ?? '/project';
 const WORK_DIR = join(PROJECT_DIR, 'work');
 
-type Driver = (turn: Turn, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
+type Driver = (turn: Turn, apiUrl: string, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
 const drivers: Record<string, Driver> = { claude: runClaudeTurn };
 
 createServer((req, res) => {
@@ -105,7 +105,7 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
 
   inFlight++;
   try {
-    const result = await driver(turn, (event) => line({ engine: turn.engine, event }), abort.signal);
+    const result = await driver(turn, API_URL, (event) => line({ engine: turn.engine, event }), abort.signal);
     line({ done: true, harness_session_id: result.harnessSessionId, error: result.error });
   } catch (err) {
     line({ done: true, error: String((err as Error)?.message ?? err) });
