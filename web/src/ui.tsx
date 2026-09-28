@@ -43,7 +43,7 @@ export function when(iso?: string) {
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
 }
 
-/** How long ago, for sync status: just now, 2 min ago, 3 h ago, or a date. */
+/** How long ago: just now, 2 min ago, 3 h ago, or a date. */
 export function ago(date?: Date) {
   if (!date) return ''
   const s = Math.round((Date.now() - date.getTime()) / 1000)

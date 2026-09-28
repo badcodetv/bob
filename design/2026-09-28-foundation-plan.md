@@ -702,7 +702,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `access_test.go` for every new route. Validation: `go vet ./...` clean; `./stack test` → "all
   green"; full `go test ./... -v` (with `BOB_TEST_DATABASE_URL`) shows no SKIP/FAIL.
 
-### T6: Web — workers page, editor, history, project prompt   [Status: pending | Model: sonnet]
+### T6: Web — workers page, editor, history, project prompt   [Status: done | Model: sonnet]
 - **Scope:** Remove git from the UI: `SyncStatus` and the "No workers yet… git" text
   (`Sidebar.tsx:47,59-62`); "Sync from git" / "Last synced" / sync error
   (`Overview.tsx:31-71`) and "defined in workers/<name>.md" (`Overview.tsx:124-127`); the sync
@@ -731,8 +731,36 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `cd web && npx tsc -b` → clean; `cd web && npx oxlint` → no errors; manual on
   `./stack start`: create worker `helper` (claude) on `dev`, edit its prompt, see 2 versions.
 - **Depends on:** T5
-- [ ] done
-- Notes:
+- [x] done
+- Notes: Implemented as scoped: `App.tsx` now loads `workers: Worker[] | null` (refetched on
+  project change and on window `focus`), routes `#/p/<p>/workers`, `#/p/<p>/workers/new`,
+  `#/p/<p>/workers/<name>` and `#/p/<p>/prompt`. New `Workers.tsx` (list + project-prompt card +
+  "New worker"), `WorkerEditor.tsx` (name locked after create, engine select, model text field,
+  effort select filtered by engine — a local `codexEfforts` list beside the existing
+  `claudeEfforts`/`claudeModels` from `engines/claude.ts`, since there is no codex client module
+  yet — tools as a comma list for claude only, prompt textarea, required "why", delete with its own
+  required "why", and an expandable version history from `GET …/workers/{name}/versions`), and
+  `ProjectPrompt.tsx` (textarea + why + history). `ProjectSettings.tsx` deleted; `api.ts`'s
+  `Project` and `Worker` match the Interfaces exactly (confirmed live, see below); `WorkerList` is
+  gone; `api.workers` returns `Worker[]`. Sidebar/Overview/Files/Schedules/Chat/ChatHeader updated
+  per scope; `Activity` ('starting'/'syncing') and the sync/`files_root` plumbing are removed
+  outright rather than just their text, since nothing else used them once `api.sync` was deleted.
+  Manual check (no browser click-through — a signed-in session needs Google sign-in, which this
+  agent cannot do): minted a `bob_session` cookie for an admin email from `.env`'s
+  `BOB_PROJECT_MAP` with a throwaway `api/cmd/t6mint` program using `auth.Auth.SetSession`
+  (removed after use, confirmed by `git status`), then against the running `./stack start` API on
+  `127.0.0.1:8070`: `POST /api/projects/dev/workers` created `helper` (claude), `PATCH
+  …/workers/helper` changed its prompt, and `GET …/workers/helper/versions` returned exactly 2
+  versions (`create` then `update`), each with `why`/`changed_by`/`changed_at` and a full
+  snapshot — the same shape `WorkerEditor.tsx`'s `VersionList` renders. `GET /api/projects` also
+  confirmed the new `Project` shape (`name`, `prompt`, `created_at`, no repo fields) live.
+  `cd web && npx tsc -b` clean; `npx oxlint` reports 0 errors (warnings only, matching the
+  pre-existing baseline pattern in this repo, e.g. `set-state-in-effect` on the same lines Schedules
+  and App already had it); `./stack test` → "all green"; `grep -rni "git\b\|sync" web/src
+  --include=*.tsx` matches only incidental "async"/"synchronously" substrings, no user-facing git
+  or sync text (also fixed two the ticket's line refs didn't call out: `Schedules.tsx`'s "Bob pulls
+  from git and starts a new chat" dialog text, and a stale "for sync status" doc-comment on `ui.tsx`'s
+  `ago()`).
 
 ### T7: Web — plain chat and read-only removed-worker chats   [Status: pending | Model: sonnet]
 - **Scope:** Route `#/p/<p>/new/` (empty worker) opens a plain new chat: in `App.tsx:43-44` test
@@ -1245,3 +1273,17 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   history UI reads versions of a *live* worker only, so this is fine for T5's and T6's scope as
   written; flagging in case a later ticket wants a deleted worker's history reachable (e.g. by
   worker id instead of by project+name).
+- **T6:** the ticket's scope lines named specific git/sync text to remove but missed two spots the
+  acceptance-criteria grep still caught: `Schedules.tsx`'s new-schedule dialog description ("Bob
+  pulls from git and starts a new chat…") and a doc-comment on `ui.tsx`'s `ago()` ("for sync
+  status"). Both fixed in T6's own scope, not left for later — the grep is T6's own acceptance
+  criterion and these were plainly in scope (chat/schedule/worker UI text), not new work.
+- **T6:** `Activity` ('starting'/'syncing') and the `files_root`/`WorkerList` plumbing weren't just
+  text to delete — once `api.sync` and `WorkerList` were gone nothing else read them, so they were
+  removed outright (`App.tsx`, `Sidebar.tsx`, `Overview.tsx`, `Files.tsx`) rather than left as dead
+  state. `Files.tsx`'s Refresh button now just reloads the current folder's listing (no more sync
+  status to key a cache-bust off of); the work folder's root is always `path ?? ''`.
+- **T6:** no codex client module exists yet (only `engines/claude.ts`), so `WorkerEditor.tsx`
+  defines its own local `codexEfforts` list (`minimal, low, medium, high, xhigh`, matching
+  `workers.go`'s `codexEfforts` map) rather than importing one; model stays a free-text field for
+  both engines since there's no codex model list to offer either.

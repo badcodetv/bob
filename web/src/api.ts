@@ -1,9 +1,20 @@
 // Thin client for Bob's API. Every call is same-origin; the session cookie does the auth.
 
-export interface Project { name: string; repo_url: string; repo_ref: string; subfolder: string; image: string; created_at: string }
+export interface Project { name: string; prompt: string; created_at: string }
 export interface FileEntry { name: string; type: 'file' | 'dir' | 'link' | 'other'; size: number }
-export interface Worker { name: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string }
-export interface WorkerList { project: { files_root: string }; sync: { ok: boolean; commit?: string; error?: string }; workers: Worker[]; error?: string }
+export interface Worker {
+  id: string; project: string; name: string; engine: string; model: string; effort: string
+  tools?: string[]; prompt: string; labels: Record<string, string>
+  created_by: string; created_at: string; updated_by: string; updated_at: string
+}
+/** One create, update or delete of a worker: a full snapshot of it, who changed it, when and why. */
+export interface WorkerVersion {
+  id: number; worker_id: string; project: string; name: string; action: 'create' | 'update' | 'delete'
+  snapshot: { prompt?: string; [key: string]: unknown }; why: string; changed_by: string; changed_at: string
+}
+export interface PromptVersion { id: number; prompt: string; why: string; changed_by: string; changed_at: string }
+/** What a worker needs to be created or changed; name and why are only required by the server. */
+export type WorkerInput = { name?: string; engine: string; model?: string; effort?: string; tools?: string[]; prompt: string; why: string }
 export interface Session {
   id: string; project: string; worker: string; engine: string; harness_session_id: string; model: string; effort: string; created_at: string
   // Only on the project's session list: the first message, messages sent, and the last activity.
@@ -46,8 +57,13 @@ export const api = {
   logout: () => call('POST', '/api/logout'),
   projects: () => call<{ projects: Project[] }>('GET', '/api/projects').then((r) => r.projects),
   project: (name: string) => call<Project>('GET', `/api/projects/${name}`),
-  workers: (project: string) => call<WorkerList>('GET', `/api/projects/${project}/workers`),
-  sync: (project: string) => call<WorkerList>('POST', `/api/projects/${project}/sync`),
+  workers: (project: string) => call<{ workers: Worker[] }>('GET', `/api/projects/${project}/workers`).then((r) => r.workers),
+  createWorker: (project: string, w: WorkerInput) => call<Worker>('POST', `/api/projects/${project}/workers`, w),
+  updateWorker: (project: string, name: string, w: Omit<WorkerInput, 'name'>) => call<Worker>('PATCH', `/api/projects/${project}/workers/${encodeURIComponent(name)}`, w),
+  deleteWorker: (project: string, name: string, why: string) => call<{ ok: boolean }>('DELETE', `/api/projects/${project}/workers/${encodeURIComponent(name)}?why=${encodeURIComponent(why)}`),
+  workerVersions: (project: string, name: string) => call<{ versions: WorkerVersion[] }>('GET', `/api/projects/${project}/workers/${encodeURIComponent(name)}/versions`).then((r) => r.versions),
+  projectPrompt: (project: string) => call<{ prompt: string; versions: PromptVersion[] }>('GET', `/api/projects/${project}/prompt`),
+  setProjectPrompt: (project: string, prompt: string, why: string) => call<{ prompt: string }>('PUT', `/api/projects/${project}/prompt`, { prompt, why }),
   sessions: (project: string) => call<{ sessions: Session[] }>('GET', `/api/projects/${project}/sessions`).then((r) => r.sessions),
   createSession: (project: string, worker: string, settings: Settings) => call<Session>('POST', `/api/projects/${project}/sessions`, { worker, ...settings }),
   updateSession: (id: string, settings: Settings) => call<Session>('PATCH', `/api/sessions/${id}`, settings),

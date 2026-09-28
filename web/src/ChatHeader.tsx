@@ -72,7 +72,7 @@ export function ChatHeader({ worker, engine, title, workerDefaults, settings, on
               <DialogHeader>
                 <DialogTitle>Delete this chat?</DialogTitle>
                 <DialogDescription>
-                  {title ? <>“{title}” and </> : 'Its messages and '}its git branch are removed. This can't be undone.
+                  {title ? <>“{title}” and its messages are</> : 'Its messages are'} removed. This can't be undone.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>

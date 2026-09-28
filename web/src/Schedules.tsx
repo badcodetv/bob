@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { api, type ScheduleInput, type ScheduleRun, type ScheduleView, type WorkerList } from './api'
+import { api, type ScheduleInput, type ScheduleRun, type ScheduleView, type Worker } from './api'
 import { describeCron } from './cron'
 import { Empty, Section } from './Overview'
 import { PageBar, WorkerBadge } from './ui'
@@ -14,7 +14,7 @@ import { PageBar, WorkerBadge } from './ui'
 export function Schedules({ project, admin, workers, onRan, onError }: {
   project: string
   admin: boolean
-  workers: WorkerList | null
+  workers: Worker[] | null
   onRan: () => void
   onError: (e: unknown) => void
 }) {
@@ -72,7 +72,7 @@ export function Schedules({ project, admin, workers, onRan, onError }: {
               ) : (
                 <ul>
                   {list.map((s) => (
-                    <ScheduleRow key={s.id} project={project} schedule={s} engine={workers?.workers.find((w) => w.name === s.worker)?.engine ?? ''} admin={admin} paused={paused}
+                    <ScheduleRow key={s.id} project={project} schedule={s} engine={workers?.find((w) => w.name === s.worker)?.engine ?? ''} admin={admin} paused={paused}
                       onRunNow={() => runNow(s)} onEnabled={(on) => setEnabled(s, on)} onEdit={() => setEditing(s)} onError={onError} />
                   ))}
                 </ul>
@@ -174,10 +174,10 @@ function fullTime(iso: string, timeZone?: string) {
 const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
 function ScheduleEditor({ project, schedule, workers, onClose, onSaved, onError }: {
-  project: string; schedule: ScheduleView | 'new' | null; workers: WorkerList | null
+  project: string; schedule: ScheduleView | 'new' | null; workers: Worker[] | null
   onClose: () => void; onSaved: () => void; onError: (e: unknown) => void
 }) {
-  const blank: ScheduleInput = { name: '', worker: workers?.workers[0]?.name ?? '', cron: '0 6 * * *', timezone: localZone, message: '', enabled: true, keep_sessions: 30 }
+  const blank: ScheduleInput = { name: '', worker: workers?.[0]?.name ?? '', cron: '0 6 * * *', timezone: localZone, message: '', enabled: true, keep_sessions: 30 }
   const [form, setForm] = useState<ScheduleInput>(blank)
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -200,7 +200,7 @@ function ScheduleEditor({ project, schedule, workers, onClose, onSaved, onError 
     api.deleteSchedule(existing.id).then(onSaved).catch(onError).finally(() => setBusy(false))
   }
   const words = describeCron(form.cron, form.timezone)
-  const workerNames = workers?.workers.map((w) => w.name) ?? []
+  const workerNames = workers?.map((w) => w.name) ?? []
   if (form.worker && !workerNames.includes(form.worker)) workerNames.push(form.worker)
 
   return (
@@ -209,7 +209,7 @@ function ScheduleEditor({ project, schedule, workers, onClose, onSaved, onError 
         <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); save() }}>
           <DialogHeader>
             <DialogTitle>{existing ? `Edit ${existing.name}` : 'New schedule'}</DialogTitle>
-            <DialogDescription>Each time it fires, Bob pulls from git and starts a new chat with the worker, sending this message.</DialogDescription>
+            <DialogDescription>Each time it fires, Bob starts a new chat with the worker, sending this message.</DialogDescription>
           </DialogHeader>
           <Field label="Name" hint="Lower-case letters, numbers and dashes.">
             <Input value={form.name} placeholder="daily-research" onChange={(e) => set('name', e.target.value)} />

@@ -143,7 +143,6 @@ function Welcome({ worker, loading }: { worker?: Worker; loading: boolean }) {
       <p className="text-muted-foreground border-l-2 py-0.5 pl-3 text-sm line-clamp-4">{worker.prompt}</p>
       <p className="text-faint text-[13px]">
         {engineName(worker.engine)}{worker.model ? `, ${prettyModel(worker.model)}` : ''}{worker.effort ? `, ${worker.effort} effort` : ''}.
-        This chat gets its own branch of the project repository.
       </p>
     </div>
   )

@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, Unauthorized, type Config, type Project, type Session, type Worker, type WorkerList } from './api'
+import { api, Unauthorized, type Config, type Project, type Session, type Worker } from './api'
 import { Chat, NewChat } from './Chat'
 import { Overview } from './Overview'
+import { ProjectPrompt } from './ProjectPrompt'
 import { Schedules } from './Schedules'
 import { Files } from './Files'
 import { Sidebar } from './Sidebar'
+import { WorkerEditor } from './WorkerEditor'
+import { Workers } from './Workers'
 import { DrawerContext } from './ui'
 import { cn } from '@/lib/utils'
 
 // Routes are the URL hash: #/ · #/p/<project> (its overview) · #/p/<project>/s/<session> · #/p/<project>/new/<worker>
-// · #/p/<project>/schedules · #/p/<project>/files (its files folder) · #/p/<project>/files/<path> ('' = the repository root)
+// · #/p/<project>/workers (list) · #/p/<project>/workers/new · #/p/<project>/workers/<name> · #/p/<project>/prompt
+// · #/p/<project>/schedules · #/p/<project>/files (its work folder) · #/p/<project>/files/<path> ('' = its root)
 function useHash() {
   const [hash, setHash] = useState(window.location.hash.slice(1) || '/')
   useEffect(() => {
@@ -31,17 +35,20 @@ export default function App() {
 }
 
 /** Which of a project's pages is open. */
-export type Page = 'overview' | 'schedules' | 'files' | 'chat'
-
-/** What the sidebar says the project is doing right now. */
-export type Activity = '' | 'starting' | 'syncing'
+export type Page = 'overview' | 'workers' | 'prompt' | 'schedules' | 'files' | 'chat'
 
 function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; onSignedOut: () => void }) {
   const hash = useHash()
   const [, , project, mode, id, ...rest] = hash.split('/')
   const session = mode === 's' ? id : undefined
   const newWorker = mode === 'new' ? id : undefined
-  const page: Page = session || newWorker ? 'chat' : mode === 'schedules' ? 'schedules' : mode === 'files' ? 'files' : 'overview'
+  const workerRoute = mode === 'workers' ? id : undefined // undefined = the list; 'new' = create; else the worker's name
+  const page: Page = session || newWorker ? 'chat'
+    : mode === 'schedules' ? 'schedules'
+    : mode === 'files' ? 'files'
+    : mode === 'workers' ? 'workers'
+    : mode === 'prompt' ? 'prompt'
+    : 'overview'
   const filePath = mode === 'files' && id !== undefined ? [id, ...rest].map(decodeURIComponent).filter(Boolean).join('/') : undefined
   const [drawer, setDrawer] = useState(false)
   useEffect(() => { setDrawer(false) }, [hash])
@@ -55,11 +62,13 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
   const loadProjects = useCallback(() => api.projects().then(setProjects).catch(guard), [guard])
   useEffect(() => { loadProjects() }, [loadProjects])
 
-  // The open project's workers and chats, shared by the sidebar and the overview.
-  const [workers, setWorkers] = useState<WorkerList | null>(null)
-  const [syncedAt, setSyncedAt] = useState<Date>()
-  const [activity, setActivity] = useState<Activity>('')
+  // The open project's workers and chats, shared by the sidebar and every page.
+  const [workers, setWorkers] = useState<Worker[] | null>(null)
   const [sessions, setSessions] = useState<Session[]>([])
+
+  const loadWorkers = useCallback(() => {
+    if (project) api.workers(project).then(setWorkers).catch(guard)
+  }, [project, guard])
 
   const loadSessions = useCallback(() => {
     if (project) api.sessions(project).then(setSessions).catch(guard)
@@ -69,18 +78,18 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
     setWorkers(null)
     setSessions([])
     if (!project) return
-    setActivity('starting')
-    api.workers(project).then((l) => { setWorkers(l); setSyncedAt(new Date()) }).catch(guard).finally(() => setActivity(''))
+    loadWorkers()
     loadSessions()
-  }, [project, guard, loadSessions])
+  }, [project, guard, loadWorkers, loadSessions])
 
-  const sync = useCallback(() => {
-    if (!project) return
-    setActivity('syncing')
-    api.sync(project).then((l) => { setWorkers(l); setSyncedAt(new Date()) }).catch(guard).finally(() => setActivity(''))
-  }, [project, guard])
+  // Workers an agent creates through MCP don't push to the browser: catch up whenever the tab
+  // regains focus, so a worker made elsewhere shows up without a reload.
+  useEffect(() => {
+    window.addEventListener('focus', loadWorkers)
+    return () => window.removeEventListener('focus', loadWorkers)
+  }, [loadWorkers])
 
-  const findWorker = (name?: string) => workers?.workers.find((w) => w.name === name)
+  const findWorker = (name?: string) => workers?.find((w) => w.name === name)
 
   return (
     <DrawerContext.Provider value={() => setDrawer(true)}>
@@ -90,8 +99,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
           drawer && 'translate-x-0',
         )}>
           <Sidebar email={email} projects={projects} project={project} workers={workers} sessions={sessions}
-            activity={activity} syncedAt={syncedAt} currentSession={session} currentWorker={newWorker}
-            page={page} onSync={sync} onSignOut={() => api.logout().then(onSignedOut)} />
+            currentSession={session} currentWorker={newWorker} page={page} onSignOut={() => api.logout().then(onSignedOut)} />
         </div>
         {drawer && <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setDrawer(false)} />}
 
@@ -104,10 +112,17 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
                 loadSessions()
                 window.location.hash = `/p/${project}/s/${s.id}`
               }} />
-            : project && page === 'files' ? <Files key={project} project={project} path={filePath} workers={workers} activity={activity} syncedAt={syncedAt} onSync={sync} onError={guard} />
+            : project && page === 'files' ? <Files key={project} project={project} path={filePath} onError={guard} />
             : project && page === 'schedules' ? <Schedules key={project} project={project} admin={admin} workers={workers} onRan={loadSessions} onError={guard} />
-            : project ? <Overview key={project} name={project} admin={admin} workers={workers} sessions={sessions} activity={activity}
-                syncedAt={syncedAt} onSync={sync} onError={guard} />
+            : project && page === 'prompt' ? <ProjectPrompt key={project} project={project} onError={guard} />
+            : project && page === 'workers' ? (
+                workerRoute
+                  ? <WorkerEditor key={workerRoute} project={project} name={workerRoute === 'new' ? undefined : workerRoute} workers={workers}
+                      onSaved={() => { loadWorkers(); window.location.hash = `/p/${project}/workers` }}
+                      onDeleted={() => { loadWorkers(); loadSessions(); window.location.hash = `/p/${project}/workers` }} onError={guard} />
+                  : <Workers key={project} project={project} workers={workers} onError={guard} />
+              )
+            : project ? <Overview key={project} name={project} workers={workers} sessions={sessions} onError={guard} />
             : <Home projects={projects} />}
         </main>
       </div>
@@ -130,7 +145,6 @@ function Home({ projects }: { projects: Project[] }) {
             <li key={p.name} className="border-t first:border-t-0">
               <a href={`#/p/${p.name}`} className="hover:bg-accent -mx-2 flex items-baseline justify-between rounded-lg px-2 py-2.5">
                 <span className="text-[15px] font-medium">{p.name}</span>
-                <span className="text-faint truncate pl-4 font-mono text-xs">{p.repo_url.replace(/^https:\/\//, '')}</span>
               </a>
             </li>
           ))}

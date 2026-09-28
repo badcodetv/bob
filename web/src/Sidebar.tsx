@@ -1,32 +1,29 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ChevronDownIcon, ClockIcon, FolderOpenIcon, LayoutGridIcon, PlusIcon, RefreshCwIcon } from 'lucide-react'
+import { ChevronDownIcon, ClockIcon, FolderOpenIcon, LayoutGridIcon, PlusIcon, UsersIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Project, Session, WorkerList } from './api'
-import type { Activity, Page } from './App'
-import { ago, engineName, Menu, MenuItem, when, WorkerBadge } from './ui'
+import type { Project, Session, Worker } from './api'
+import type { Page } from './App'
+import { engineName, Menu, MenuItem, when, WorkerBadge } from './ui'
 
 const SHOWN_CHATS = 5
 
-export function Sidebar({ email, projects, project, workers, sessions, activity, syncedAt, currentSession, currentWorker, page, onSync, onSignOut }: {
+export function Sidebar({ email, projects, project, workers, sessions, currentSession, currentWorker, page, onSignOut }: {
   email: string
   projects: Project[]
   project?: string
-  workers: WorkerList | null
+  workers: Worker[] | null
   sessions: Session[]
-  activity: Activity
-  syncedAt?: Date
   currentSession?: string
   currentWorker?: string
   page: Page
-  onSync: () => void
   onSignOut: () => void
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t) }, [])
 
-  // Every worker from git, then any worker that only survives in old chats.
-  const groups = (workers?.workers ?? []).map((w) => ({ name: w.name, engine: w.engine, gone: false }))
+  // Every current worker, then any worker that only survives in old chats.
+  const groups = (workers ?? []).map((w) => ({ name: w.name, engine: w.engine, gone: false }))
   for (const s of sessions) {
     if (!groups.some((g) => g.name === s.worker)) groups.push({ name: s.worker, engine: s.engine, gone: true })
   }
@@ -44,21 +41,22 @@ export function Sidebar({ email, projects, project, workers, sessions, activity,
             <MenuItem key={p.name} checked={p.name === project} onClick={() => { window.location.hash = `/p/${p.name}` }}>{p.name}</MenuItem>
           ))}
         </Menu>
-        {project && <SyncStatus workers={workers} activity={activity} syncedAt={syncedAt} onSync={onSync} />}
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-3 pt-2.5 pb-4">
         {project && (
           <div className="flex flex-col gap-px">
             <NavLink href={`#/p/${project}`} active={page === 'overview'} icon={<LayoutGridIcon className="size-4" />}>Overview</NavLink>
+            <NavLink href={`#/p/${project}/workers`} active={page === 'workers'} icon={<UsersIcon className="size-4" />}>Workers</NavLink>
             <NavLink href={`#/p/${project}/files`} active={page === 'files'} icon={<FolderOpenIcon className="size-4" />}>Files</NavLink>
             <NavLink href={`#/p/${project}/schedules`} active={page === 'schedules'} icon={<ClockIcon className="size-4" />}>Schedules</NavLink>
           </div>
         )}
 
-        {project && workers?.error && <p className="text-destructive px-2 text-xs">{workers.error}</p>}
-        {project && workers?.sync.ok && workers.workers.length === 0 && (
-          <p className="text-muted-foreground px-2 text-[13px]">No workers yet. Add a <code className="font-mono text-xs">workers/*.md</code> file to the project's folder in git, then sync.</p>
+        {project && workers && workers.length === 0 && (
+          <p className="text-muted-foreground px-2 text-[13px]">
+            No workers yet. <a href={`#/p/${project}/workers/new`} className="underline underline-offset-2">Create one</a> to start chatting.
+          </p>
         )}
 
         {project && groups.map((g) => {
@@ -129,24 +127,3 @@ function NavLink({ href, active, icon, children }: { href: string; active: boole
     </a>
   )
 }
-
-function SyncStatus({ workers, activity, syncedAt, onSync }: { workers: WorkerList | null; activity: Activity; syncedAt?: Date; onSync: () => void }) {
-  const failed = workers && !workers.sync.ok
-  const label = activity === 'starting' ? 'Starting the computer…'
-    : activity === 'syncing' ? 'Pulling from git…'
-    : failed ? 'Git sync failed'
-    : syncedAt ? `Synced ${ago(syncedAt)}` : ''
-  return (
-    <div className="flex items-center gap-2 pl-2 text-[12.5px] whitespace-nowrap">
-      <span className={cn('min-w-0 flex-1 truncate', failed ? 'text-destructive' : 'text-muted-foreground')}
-        title={failed ? workers.sync.error : workers?.sync.commit ? `At ${workers.sync.commit}` : undefined}>
-        {label}
-      </span>
-      <button type="button" onClick={onSync} disabled={!!activity} aria-label="Sync workers from git" title="Sync workers from git"
-        className="text-muted-foreground hover:bg-accent hover:text-foreground grid size-6 place-items-center rounded-md disabled:opacity-60">
-        <RefreshCwIcon className={cn('size-3.5', activity && 'animate-spin')} />
-      </button>
-    </div>
-  )
-}
-
