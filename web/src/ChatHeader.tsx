@@ -5,11 +5,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from '@/lib/utils'
 import type { Settings, Worker } from './api'
 import { claudeEfforts, claudeModels } from './engines/claude'
+import { codexEfforts, codexModels } from './engines/codex'
 import { engineName, Menu, MenuItem, MenuNote, MenuSeparator, PageBar, prettyModel, WorkerBadge } from './ui'
 
 // Choices offered per engine. An empty value means "the worker's own setting".
 const options: Record<string, { model: string[]; effort: string[] }> = {
   claude: { model: claudeModels, effort: claudeEfforts },
+  codex: { model: codexModels, effort: codexEfforts },
 }
 
 export function ChatHeader({ worker, engine, title, workerDefaults, settings, onChange, onDelete }: {

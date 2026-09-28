@@ -4,13 +4,12 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { api, type Worker, type WorkerVersion } from './api'
 import { claudeEfforts, claudeModels } from './engines/claude'
+import { codexEfforts, codexModels } from './engines/codex'
 import { Empty, Section } from './Overview'
 import { PageBar, when, WorkerBadge } from './ui'
 
-// codex's effort levels (workers.go's codexEfforts); there is no client-side codex converter yet,
-// so unlike claude there is no model list to offer — model stays a free-text field for both.
-const codexEfforts = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const effortsFor = (engine: string) => (engine === 'codex' ? codexEfforts : claudeEfforts)
+const modelsFor = (engine: string) => (engine === 'codex' ? codexModels : claudeModels)
 
 type Form = { name: string; engine: string; model: string; effort: string; tools: string; prompt: string }
 const blank = (w?: Worker): Form => ({
@@ -94,7 +93,11 @@ export function WorkerEditor({ project, name, workers, onSaved, onDeleted, onErr
               </Field>
             </div>
             <Field label="Model" hint="Blank uses the harness default.">
-              <Input value={form.model} placeholder={form.engine === 'claude' ? claudeModels[0] : ''} onChange={(e) => set('model', e.target.value)} />
+              <select value={form.model} onChange={(e) => set('model', e.target.value)} className="border-input h-8 rounded-lg border bg-transparent px-2 text-sm">
+                <option value="">Default</option>
+                {form.model && !modelsFor(form.engine).includes(form.model) && <option value={form.model}>{form.model}</option>}
+                {modelsFor(form.engine).map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
             </Field>
             {form.engine === 'claude' && (
               <Field label="Tools" hint="Comma-separated; blank allows the harness default (every tool).">

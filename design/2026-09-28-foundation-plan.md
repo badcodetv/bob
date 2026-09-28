@@ -983,7 +983,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `docker exec -it bob-project-dev codex login --device-auth`; the resume/streaming acceptance
   criteria are checked by T12's manual check after that.
 
-### T12: Codex in the API and the web   [Status: pending | Model: sonnet]
+### T12: Codex in the API and the web   [Status: in progress — code committed; live check waits on Kai's codex login | Model: sonnet]
 - **Scope:** `api/internal/engines/engines.go`: for `codex`, `kind` = event `type`; ephemeral when
   the type is `item.started` or `item.updated`. `web/src/engines/codex.ts`:
   `codexMessages(events, live)` → assistant-ui messages: `agent_message` → text; `reasoning` →
@@ -1003,7 +1003,46 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   chat on `dev`, "run `ls /project` and call bob_whoami" → both shown, and still shown after reload.
 - **Depends on:** T7, T11
 - [ ] done
-- Notes:
+- Notes: (executor) `engines.go`: `codex`'s `kind` is the event `type` (no `subtype` in Codex's
+  events); ephemeral (streamed live, not stored) for `item.started`/`item.updated` — the in-progress
+  snapshot of a running item — and stored for everything else, `item.completed` in particular.
+  TDD: `engines_test.go` gained 5 cases (`thread.started`/`item.started`/`item.updated`/
+  `item.completed`/`turn.completed`), failing first on the two ephemeral ones, then passing.
+  `web/src/engines/codex.ts` mirrors `claude.ts`'s shape: `bob.user_message` opens a new turn/reply
+  id (same flicker-avoidance reasoning); `item.completed` items become message parts —
+  `agent_message` → text, `reasoning` → reasoning, `command_execution`/`mcp_tool_call`/
+  `file_change`/`web_search` → tool-call parts (result = aggregated output / MCP result-or-error
+  text / changed paths / empty, `isError` from the item's `status`), `todo_list` → a `[x]/[ ]` text
+  list, item-level `error` → `⚠️` text. Also handles the driver's own `error` (T11's Notes: a
+  non-fatal retry notice or, if nothing recovers it, the last one shown) and `turn.failed` events as
+  `⚠️` text, plus `bob.turn_failed` as `claude.ts` does. No `codexDelta`/live-typing accumulator was
+  added — `item.started`/`item.updated` are ephemeral and not wired into `Chat.tsx`'s `live` state
+  for codex (only `claude`'s `stream_event` deltas are); a Codex reply appears whole per
+  `item.completed`, not token-by-token. `codexModels`: ran `docker exec bob-project-dev codex debug
+  models` (a JSON list on `codex-cli 0.158.0`) and kept the ids with `"visibility":"list"` — the set
+  Codex's own picker offers — in the order given: `gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5.6-sol,
+  gpt-5.6-terra, gpt-5.6-luna, gpt-5.5`; left out ids marked `"visibility":"hide"`
+  (`gpt-daybreak-blue-latest`, `gpt-daybreak-red-latest`, `codex-auto-review`). `codexEfforts` is
+  exactly the ticket's fixed list (`minimal, low, medium, high, xhigh`), unchanged from T6/T11's
+  `workers.go` list — logged as a Discovered Issue below since `codex debug models` shows no model
+  actually supporting `minimal` (all list `low…xhigh`, most also `max`/`ultra`) and T11's Notes
+  already flagged the SDK allowing `max`/`ultra`/`persistent` too. `Chat.tsx`: `toMessages` now
+  routes `codex` to `codexMessages`; the plain-chat engine bar's per-engine free-text codex
+  model/effort inputs are replaced with the same `Menu` pickers Claude uses, driven by a
+  `plainOptions` map (`claude`/`codex` → their model+effort lists); the old local `codexEfforts`
+  duplicate is gone. `ChatHeader.tsx`'s `options` map gained a `codex` entry (`codexModels`,
+  `codexEfforts`) so a chat's per-chat override menu offers real choices instead of showing an empty
+  list. `WorkerEditor.tsx`: added `modelsFor(engine)`; the Model field, free text before, is now a
+  `<select>` like Effort, offering `modelsFor(form.engine)` plus the worker's current value as an
+  extra option when it is not one of the list (so an out-of-list or legacy value is never silently
+  dropped); its own duplicate `codexEfforts` constant is gone in favor of importing from
+  `engines/codex.ts`. Validation: `go test ./internal/engines/...` red then green on the TDD cases;
+  `./stack test` → "all green"; `cd web && npx tsc -b` → clean (after fixing `args` typing in the
+  new tool-call parts — assistant-ui's `ReadonlyJSONObject` doesn't accept `Record<string,
+  unknown>`, cast as `any` like the rest of the codebase does for tool `args`); `./stack build &&
+  ./stack restart` → API on :8070, web on :8080. The manual check (a live Codex plain chat on `dev`)
+  was not run: Codex is not logged in yet in `bob-project-dev` (T11 stopped there for Kai's
+  `codex login --device-auth`), and logging in was out of scope here.
 
 ### T13: Skills folder for both harnesses   [Status: pending | Model: sonnet]
 - **Scope:** `runtime/src/skills.ts`: `linkSkills(skillsDir: string, targets: string[])` makes each
@@ -1427,3 +1466,12 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `bearer_token_env_var` if that is ever preferred.
 - **T11:** the SDK's `ModelReasoningEffort` also allows `max`, `ultra` and `persistent` beyond the
   API's `codexEfforts` (`minimal…xhigh`); left as is — T12 may want to revisit the list.
+- **T12:** `docker exec bob-project-dev codex debug models` (codex-cli 0.158.0) shows no model
+  actually supporting `minimal` reasoning effort — every listed model's
+  `supported_reasoning_levels` starts at `low` (most going up through `xhigh`/`max`, some `ultra`).
+  `codexEfforts` was kept exactly as the ticket specified (`minimal, low, medium, high, xhigh`,
+  matching `workers.go`'s existing list from T6/T11) rather than changed to match; picking
+  `minimal` for a Codex chat will presumably be rejected or ignored by the CLI itself, unverified
+  since Codex isn't logged in yet. Left as-is per the ticket's literal text; flagging for whoever
+  next touches Codex's effort list in case it's worth trimming `minimal` (or adding `max`/`ultra`,
+  which every "list"-visibility model does support) once a live Codex chat can be checked.

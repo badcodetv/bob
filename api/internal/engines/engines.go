@@ -23,6 +23,10 @@ func Classify(engine string, event json.RawMessage) (kind string, ephemeral bool
 	case "claude":
 		// stream_event carries partial-message deltas; the complete message follows.
 		return kind, head.Type == "stream_event"
+	case "codex":
+		// item.started/item.updated are in-progress snapshots of an item (e.g. a command still
+		// running); item.completed carries the final state and is what gets stored.
+		return kind, head.Type == "item.started" || head.Type == "item.updated"
 	}
 	return kind, false
 }

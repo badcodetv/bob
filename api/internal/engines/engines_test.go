@@ -12,6 +12,11 @@ func TestClassify(t *testing.T) {
 		{"claude", `{"type":"stream_event","event":{}}`, "stream_event", true},
 		{"codex", `{"type":"stream_event"}`, "stream_event", false},
 		{"claude", `not json`, "unknown", false},
+		{"codex", `{"type":"thread.started"}`, "thread.started", false},
+		{"codex", `{"type":"item.started"}`, "item.started", true},
+		{"codex", `{"type":"item.updated"}`, "item.updated", true},
+		{"codex", `{"type":"item.completed"}`, "item.completed", false},
+		{"codex", `{"type":"turn.completed"}`, "turn.completed", false},
 	}
 	for _, c := range cases {
 		kind, eph := Classify(c.engine, []byte(c.event))

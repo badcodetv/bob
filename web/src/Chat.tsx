@@ -5,18 +5,16 @@ import { Thread, type ThreadComponents } from '@/components/assistant-ui/element
 import { api, type BobEvent, type Session, type Settings, type Worker } from './api'
 import { ChatHeader } from './ChatHeader'
 import { claudeDelta, claudeEfforts, claudeMessages, claudeModels } from './engines/claude'
+import { codexEfforts, codexMessages, codexModels } from './engines/codex'
 import { TrailGroup, TrailStep } from './Trail'
 import { engineName, Menu, MenuItem, MenuNote, prettyModel, WorkerBadge } from './ui'
 
 const trail: ThreadComponents = { ToolGroup: TrailGroup, ToolFallback: TrailStep }
 
-// codex's effort levels (workers.go's codexEfforts, also duplicated in WorkerEditor.tsx); there
-// is no client-side codex converter or model list yet, so a plain codex chat's model is free text.
-const codexEfforts = ['minimal', 'low', 'medium', 'high', 'xhigh']
-
 // One converter per engine. An engine without one shows its events raw.
 function toMessages(engine: string, events: BobEvent[], live: string): ThreadMessageLike[] {
   if (engine === 'claude') return claudeMessages(events, live)
+  if (engine === 'codex') return codexMessages(events, live)
   return events.map((e) => ({
     id: `e${e.id}`,
     role: e.kind === 'bob.user_message' ? 'user' : 'assistant',
@@ -186,11 +184,16 @@ function PlainWelcome() {
   )
 }
 
-// Model and effort choices for a plain chat's engine. Codex has no model list yet (T12): its
-// model and effort are free text, checked by the server against its own allowed efforts.
+// Model and effort choices for a plain chat's engine.
+const plainOptions: Record<string, { model: string[]; effort: string[] }> = {
+  claude: { model: claudeModels, effort: claudeEfforts },
+  codex: { model: codexModels, effort: codexEfforts },
+}
+
 function PlainChatBar({ engine, settings, onEngineChange, onSettingsChange }: {
   engine: string; settings: Settings; onEngineChange: (engine: string) => void; onSettingsChange: (s: Settings) => void
 }) {
+  const opts = plainOptions[engine] ?? { model: [], effort: [] }
   return (
     <header className="flex h-13 shrink-0 items-center gap-2.5 border-b px-4 md:pl-6">
       <span className="shrink-0 text-[15px] font-semibold">Plain chat</span>
@@ -202,36 +205,22 @@ function PlainChatBar({ engine, settings, onEngineChange, onSettingsChange }: {
         <MenuItem checked={engine === 'claude'} onClick={() => onEngineChange('claude')}>Claude</MenuItem>
         <MenuItem checked={engine === 'codex'} onClick={() => onEngineChange('codex')}>Codex</MenuItem>
       </Menu>
-      {engine === 'claude' ? (
-        <>
-          <Menu label="Model for this chat" align="end"
-            triggerClassName="hover:bg-accent data-popup-open:bg-accent inline-flex items-baseline gap-1.5 rounded-md px-2 py-1 text-[13px]"
-            trigger={<><span className="text-faint hidden text-xs sm:inline">Model</span><span>{settings.model ? prettyModel(settings.model) : 'Default'}</span></>}>
-            <MenuNote>Model for this chat</MenuNote>
-            {claudeModels.map((m) => (
-              <MenuItem key={m} checked={settings.model === m} onClick={() => onSettingsChange({ ...settings, model: m })}>{prettyModel(m)}</MenuItem>
-            ))}
-          </Menu>
-          <Menu label="Effort for this chat" align="end"
-            triggerClassName="hover:bg-accent data-popup-open:bg-accent inline-flex items-baseline gap-1.5 rounded-md px-2 py-1 text-[13px]"
-            trigger={<><span className="text-faint hidden text-xs sm:inline">Effort</span><span>{settings.effort || 'Default'}</span></>}>
-            <MenuNote>Effort for this chat</MenuNote>
-            {claudeEfforts.map((e) => (
-              <MenuItem key={e} checked={settings.effort === e} onClick={() => onSettingsChange({ ...settings, effort: e })}>{e}</MenuItem>
-            ))}
-          </Menu>
-        </>
-      ) : (
-        <>
-          <input value={settings.model} onChange={(e) => onSettingsChange({ ...settings, model: e.target.value })} placeholder="model (default)"
-            className="border-input bg-background placeholder:text-faint w-32 rounded-md border px-2 py-1 text-[13px]" />
-          <select value={settings.effort} onChange={(e) => onSettingsChange({ ...settings, effort: e.target.value })}
-            className="border-input bg-background h-[26px] rounded-md border px-1.5 text-[13px]">
-            <option value="">Default</option>
-            {codexEfforts.map((e) => <option key={e} value={e}>{e}</option>)}
-          </select>
-        </>
-      )}
+      <Menu label="Model for this chat" align="end"
+        triggerClassName="hover:bg-accent data-popup-open:bg-accent inline-flex items-baseline gap-1.5 rounded-md px-2 py-1 text-[13px]"
+        trigger={<><span className="text-faint hidden text-xs sm:inline">Model</span><span>{settings.model ? prettyModel(settings.model) : 'Default'}</span></>}>
+        <MenuNote>Model for this chat</MenuNote>
+        {opts.model.map((m) => (
+          <MenuItem key={m} checked={settings.model === m} onClick={() => onSettingsChange({ ...settings, model: m })}>{prettyModel(m)}</MenuItem>
+        ))}
+      </Menu>
+      <Menu label="Effort for this chat" align="end"
+        triggerClassName="hover:bg-accent data-popup-open:bg-accent inline-flex items-baseline gap-1.5 rounded-md px-2 py-1 text-[13px]"
+        trigger={<><span className="text-faint hidden text-xs sm:inline">Effort</span><span>{settings.effort || 'Default'}</span></>}>
+        <MenuNote>Effort for this chat</MenuNote>
+        {opts.effort.map((e) => (
+          <MenuItem key={e} checked={settings.effort === e} onClick={() => onSettingsChange({ ...settings, effort: e })}>{e}</MenuItem>
+        ))}
+      </Menu>
     </header>
   )
 }
