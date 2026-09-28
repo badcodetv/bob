@@ -23,6 +23,7 @@ import { runCodexTurn } from './codex.js';
 import { listDir, openFile, resolveRepoPath } from './files.js';
 import { checkAuth } from './auth.js';
 import { parseTurn, type Turn, type TurnResult } from './turn.js';
+import { linkSkills } from './skills.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const TOKEN = process.env.BOB_RUNTIME_TOKEN ?? '';
@@ -44,6 +45,14 @@ let inFlight = 0;
 let onDrained: (() => void) | null = null;
 const PROJECT_DIR = process.env.BOB_PROJECT_DIR ?? '/project';
 const WORK_DIR = join(PROJECT_DIR, 'work');
+const SKILLS_DIR = join(PROJECT_DIR, 'skills');
+
+// A skill dropped in /project/skills is picked up by both harnesses: each keeps its own skills
+// directory under its home, symlinked here.
+const skillTargets = [process.env.CLAUDE_CONFIG_DIR, process.env.CODEX_HOME]
+  .filter((home): home is string => Boolean(home))
+  .map((home) => join(home, 'skills'));
+linkSkills(SKILLS_DIR, skillTargets);
 
 type Driver = (turn: Turn, apiUrl: string, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
 const drivers: Record<string, Driver> = { claude: runClaudeTurn, codex: runCodexTurn };

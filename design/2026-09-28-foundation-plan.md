@@ -1044,7 +1044,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   was not run: Codex is not logged in yet in `bob-project-dev` (T11 stopped there for Kai's
   `codex login --device-auth`), and logging in was out of scope here.
 
-### T13: Skills folder for both harnesses   [Status: pending | Model: sonnet]
+### T13: Skills folder for both harnesses   [Status: in progress — code committed, Claude half checked; Codex half waits on Kai's codex login | Model: sonnet]
 - **Scope:** `runtime/src/skills.ts`: `linkSkills(skillsDir: string, targets: string[])` makes each
   target a symlink to `skillsDir` (replaces a stale symlink; leaves a real directory alone and logs
   it). `server.ts` calls it at startup with `[$CLAUDE_CONFIG_DIR/skills, $CODEX_HOME/skills]`.
@@ -1059,7 +1059,37 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `./stack build && ./stack restart`, ask each engine "what skills do you have?" → both name `haiku`.
 - **Depends on:** T11
 - [ ] done
-- Notes:
+- Notes: (executor) Confirmed `$CLAUDE_CONFIG_DIR`/`$CODEX_HOME` from `runtime/Dockerfile:25-26`
+  (`/project/.bob/claude`, `/project/.bob/codex`); `entrypoint.sh` already `mkdir -p`s both plus
+  `$P/skills` before starting the server, so `linkSkills`'s own `mkdirSync(dirname(target), {
+  recursive: true })` is belt-and-braces. `linkSkills(skillsDir, targets, log?)` implemented exactly
+  as scoped; wired into `server.ts` right after `WORK_DIR`, building targets from
+  `[CLAUDE_CONFIG_DIR, CODEX_HOME].filter(Boolean).map(h => join(h, 'skills'))` so a missing env var
+  (e.g. in a future non-Docker run) is skipped rather than crashing. `claude.ts` untouched — already
+  `skills: 'all'`.
+  Codex's skills lookup path: verified by grepping printable strings in the bundled
+  `codex-linux-x64` binary inside `bob-project-dev`
+  (`@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex`, no `strings` binary in the
+  container so used `grep -a -o`): the string table contains literal `CODEX_HOME/skills`,
+  `HOME/.codex}/skills` and `CODEX_HOME/skills/.system/imagegen/scripts/image_gen.py`, plus a
+  `skills_config.rs`/`skills.rs` config surface with `allow_symlinked_codex_home` — confirming both
+  the expected path and that Codex is fine with `$CODEX_HOME` itself (or its `skills` subfolder)
+  being a symlink.
+  Validation: `cd runtime && rm -rf dist && npm run build && npm test` → `# pass 20` / `# fail 0`
+  (16 pre-existing + this ticket's 5 new `skills.test.ts` cases). `./stack test` → ends `── all
+  green`. Manual: created `/project/skills/haiku/SKILL.md` in `bob-project-dev`, `./stack build &&
+  ./stack restart`; `docker exec bob-project-dev ls -la $CLAUDE_CONFIG_DIR $CODEX_HOME` shows
+  `skills -> /project/skills` in both. Asked a **Claude** plain chat on project `dev` "What skills do
+  you have? List their names." (via a minted `bob_session` cookie — HMAC-signed the same way
+  `api/internal/auth/auth.go`'s `SetSession` does, in a throwaway Go program in the scratchpad,
+  deleted after use; session created and deleted via the API, never printed
+  `BOB_SESSION_SECRET`/`BOB_PROJECT_MAP`). The `system.init` event's `skills` array led with
+  `"haiku"`, and Claude's reply led with `1. **haiku**` among its skill list — acceptance criterion
+  met for the Claude half. **Codex's half was skipped**: Codex is not logged in for the `dev`
+  project (`bob-project-dev` has no `auth.json` in `$CODEX_HOME`), and logging in requires Kai's own
+  device-auth flow, which this run does not attempt. The `CODEX_HOME/skills` symlink itself was
+  confirmed to exist and resolve correctly, so once Kai runs `docker exec -it bob-project-dev codex
+  login --device-auth`, a Codex chat asking the same question should be the only remaining check.
 
 ### T14: Drive client, OAuth client and token script   [Status: pending | Model: sonnet]
 - **Scope:** **Human step (Kai)**: in a Google Cloud project, create an OAuth client of type
