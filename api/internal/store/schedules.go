@@ -45,10 +45,15 @@ func scanSchedule(row pgx.Row) (Schedule, error) {
 	return x, err
 }
 
+// CreateSchedule inserts a schedule. A duplicate (project, name) is ErrConflict.
 func (s *Store) CreateSchedule(ctx context.Context, x Schedule) (Schedule, error) {
-	return scanSchedule(s.db.QueryRow(ctx, `WITH s AS (INSERT INTO schedules (project, name, worker_id, cron, timezone, message, enabled, keep_sessions)
+	created, err := scanSchedule(s.db.QueryRow(ctx, `WITH s AS (INSERT INTO schedules (project, name, worker_id, cron, timezone, message, enabled, keep_sessions)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *) SELECT `+scheduleCols+writtenBack,
 		x.Project, x.Name, x.WorkerID, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions))
+	if isUniqueViolation(err) {
+		return Schedule{}, ErrConflict
+	}
+	return created, err
 }
 
 // UpdateSchedule saves every field but the id, project and creation time.
@@ -71,6 +76,12 @@ func (s *Store) Schedule(ctx context.Context, id string) (Schedule, error) {
 		return Schedule{}, ErrNotFound
 	}
 	return scanSchedule(s.db.QueryRow(ctx, `SELECT `+scheduleCols+scheduleFrom+` WHERE s.id = $1`, id))
+}
+
+// ScheduleByName finds a project's schedule by its name (schedule_create, _update, _delete take
+// a name, not a uuid, since a chat addressing its own project's schedules never has the id).
+func (s *Store) ScheduleByName(ctx context.Context, project, name string) (Schedule, error) {
+	return scanSchedule(s.db.QueryRow(ctx, `SELECT `+scheduleCols+scheduleFrom+` WHERE s.project = $1 AND s.name = $2`, project, name))
 }
 
 // Schedules lists a project's schedules by name; with project "", every enabled schedule.

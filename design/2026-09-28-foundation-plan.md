@@ -1379,7 +1379,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 
   (orchestrator) Checked against agent-bob `go/agentdb/labels.go` (it does exist at `/home/kai/projects/badcode/agent-bob`; the executor missed it): same key/value regex, 63-char limit, 32 labels, operators `= != in notin exists !`. Validation re-run: vet clean, 0 SKIP/FAIL, all green, tsc clean.
 
-### T19: Schedule MCP tools   [Status: pending | Model: sonnet]
+### T19: Schedule MCP tools   [Status: done | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_schedules.go`: `schedule_create`, `schedule_update`,
   `schedule_list`, `schedule_delete` (Interfaces), addressed by schedule **name** within the
   project, reusing `validSchedule` (`schedules.go:247`) and `scheduleBody.apply`
@@ -1391,8 +1391,41 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes.
 - **Validation:** `./stack test` → "all green".
 - **Depends on:** T10
-- [ ] done
-- Notes:
+- [x] done
+- Notes: implemented `api/cmd/bob/tools_schedules.go` (`(a *app) scheduleTools() []mcp.Tool`,
+  registered in `main.go` next to `workerTools`) and `api/cmd/bob/tools_schedules_test.go`.
+  `schedule_create`/`schedule_update` share a `scheduleToolArgs` struct (pointer fields, so
+  `schedule_update` can tell "left out" from a zero value) whose `.body()` converts to the
+  existing `scheduleBody` for `.apply()`; both then run `validSchedule` and, on retime/enable,
+  bump `ChangedAt` exactly as `updateSchedule` (`schedules.go`) does. All four tools resolve the
+  schedule by **name** within `Caller.Project` — no argument names a project or takes an id — via
+  a new store method `ScheduleByName(ctx, project, name)` (schedules.go, `schedules` has
+  `UNIQUE (project, name)` already) added alongside the existing id-keyed `Schedule`. Results are
+  a `scheduleToolView` (name aliases `scheduleView` from `schedules.go`: the schedule plus
+  `next_at` and `last_run`, exactly what the Schedules page and `listSchedules` show). Found and
+  fixed a real gap while writing the duplicate-name test: `store.CreateSchedule` did not turn a
+  unique-constraint violation on `(project, name)` into `store.ErrConflict` the way
+  `CreateWorker` does for workers — it just returned the raw pg error. Fixed in
+  `api/internal/store/schedules.go` (same `isUniqueViolation` pattern as `workers.go`); worth a
+  look for T20+ if any other schedule/run write assumes constraint violations already map to
+  `ErrConflict`. Not admin-gated (Decision 13): any chat in a project can create and change its
+  own schedules, matching worker tools. TDD: failing tests first in `tools_schedules_test.go`
+  covering create (+`next_at`, defaults, duplicate name, unknown worker, bad cron), update (fields
+  left out kept, `changed_at` bumped only on retime/enable), list, delete (unknown name), and
+  cross-project isolation (a `dev` chat cannot see, update or delete `wolf`'s schedule — list is
+  empty, update/delete both error, and the schedule is left untouched). Validation: `go vet ./...`
+  clean; `BOB_TEST_DATABASE_URL=... go test ./... -count=1 -v` — all pass, no SKIP/FAIL;
+  `./stack test` → "all green". Manual check after `./stack build && ./stack restart`
+  (`curl .../healthz` → `ok`): minted a `bob_session` cookie for kaiyadavenport@gmail.com with a
+  throwaway `api/cmd/minttmp` program (deleted afterwards, along with the cookie file), created a
+  plain chat on `dev` via `POST /api/projects/dev/sessions`, and sent "Using worker_create, create
+  a claude worker named haiku-writer …; then use schedule_create to create a daily schedule named
+  haiku-daily for that worker, cron 0 9 * * *, message …" via `POST /api/sessions/{id}/messages`.
+  `GET /api/projects/dev/workers` shows `haiku-writer`; `GET /api/projects/dev/schedules` (what
+  the Schedules page reads) shows `haiku-daily` with `worker: "haiku-writer"`, `next_at:
+  "2026-09-29T09:00:00Z"`. Cleaned up afterwards: deleted the `haiku-daily` schedule, the
+  `haiku-writer` worker and the test chat session; the pre-existing `poet` worker (from T10) and
+  its earlier chat were left untouched.
 
 ### T20: One scheduled run at a time per project   [Status: pending | Model: opus]
 - **Scope:** Migration `003_schedule_queue.sql`: drop and re-add the `schedule_runs.status` CHECK
