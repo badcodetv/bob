@@ -1491,7 +1491,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `bob.turn_done`. Cleaned up: deleted both runs' sessions and both schedules; `schedules`,
   `schedule_runs` and scheduled sessions are all 0 rows; `poet` untouched.
 
-### T21: Memory store and hybrid search   [Status: pending | Model: opus]
+### T21: Memory store and hybrid search   [Status: done | Model: opus]
 - **Scope:** Port agent-bob `go/agentdb/memories.go` (992 lines) and
   `go/extension/embedding/{embedding,openai}.go`, leanly. **Pre-migration check:** in
   `store.Open` (`store.go:25-35`), before `migrate`, if migration `004_memories.sql` is not yet
@@ -1528,8 +1528,59 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `docker compose -f ~/projects/badcode/ops/apps/postgres/compose.local.yml exec -T postgres psql -U postgres -d bob -c 'CREATE EXTENSION IF NOT EXISTS vector'`,
   then `./stack restart` → "ready".
 - **Depends on:** T18
-- [ ] done
-- Notes:
+- [x] done
+- Notes: implemented TDD (failing tests first, each run red before the code). `api/internal/embed/embed.go`:
+  `Dim = 1536`, `DefaultModel`, `Embedder` interface, `OpenAI{Key, Model}` (POST
+  `/v1/embeddings` with `dimensions: 1536`, 30 s client, OpenAI's error message surfaced, width and
+  finiteness checked; an unexported `endpoint` field lets the test point it at httptest), `Fake`
+  (agent-bob's hashed bag of words, unigrams only, unit length). Migration `004_memories.sql`
+  exactly as scoped (index names `memories_project`, `memories_labels`, `memories_content_tsv`,
+  `memories_embedding`, `memories_retracts`). `store.migrate` calls `needVector` right after
+  creating `schema_migrations`: skipped once 004 is recorded or the extension exists, else tries
+  `CREATE EXTENSION IF NOT EXISTS vector` and on failure returns the ticket's message plus
+  Postgres's own error in parentheses. `api/internal/store/memories.go`: `Memory` (labels never
+  nil; `CreatedBySession` is "" for none / a deleted chat), `MaxMemoryBytes = 24*1024`,
+  `CreateMemory(ctx, m, embedding, ifCurrent) (Memory, error)` — the caller embeds, the store never
+  calls out (as agent-bob); `created_at` is the store's clock (`Store.Now`), so tests can move
+  time; with `ifCurrent` it needs a `name` label, takes
+  `pg_advisory_xact_lock(hashtext('bob-memory:'||project||'\n'||name))` (same style as T20's
+  schedule lock), reads the current memory inside the lock and returns `ErrNotCurrent{Name,
+  IfCurrent, Current}` (a struct, as agent-bob, so the loser learns who won) instead of agent-bob's
+  guarded `INSERT … SELECT … WHERE`; `Memory(ctx, project, id)` (a non-uuid id is `ErrNotFound`,
+  retracted memories still readable), `CurrentMemory(ctx, project, name)`,
+  `SearchMemories(ctx, MemorySearch{Project, Selector labels.Selector, Query, QueryEmbedding, Limit,
+  Since, Until time.Time, CreatedByWorker, LatestPer}) ([]MemoryHit, error)` — the caller passes
+  an already-parsed selector and an already-resolved worker name (T22 resolves `self` and parses
+  `label_selector`). Search is agent-bob's CTE with pgx `$n` placeholders: `filtered` (project,
+  selector, not retracted, since/until, worker, `DISTINCT ON` for latest_per — key checked with
+  `labels.Validate` before being written into the SQL) → `kw` top 200 by `ts_rank_cd` → `sem` top
+  200 by `<=>` (skipped when `QueryEmbedding` is nil) → RRF k = 60 → recency tiebreak; no query →
+  newest first with score 0; snippet `left(content, 500)`. Dropped from agent-bob as not needed:
+  nullable embeddings / keyword-only degrade on write, `IncludeRetracted`/`retracted_by` audit view,
+  the vector-column probe. `main.go`: `embedderFromEnv` requires `OPENAI_API_KEY` (boot fails with a
+  message naming it), `BOB_EMBEDDING_MODEL` optional; the embedder is on `app.embed` for T22; header
+  comment lists both. `deploy/compose.yml` api: `OPENAI_API_KEY: ${OPENAI_API_KEY:?}` and
+  `BOB_EMBEDDING_MODEL: ${BOB_EMBEDDING_MODEL:-}`; `deploy/env.example` has `OPENAI_API_KEY`. The
+  laptop needed no wiring: `./stack start` sources the whole `.env` into the API, and `.env`
+  already had the key. Tests: `embed_test.go` (Fake, OpenAI against httptest, and
+  `TestOpenAILive`, which makes one real call only with `BOB_TEST_OPENAI=1` + `OPENAI_API_KEY`
+  and otherwise logs and passes rather than skipping, so it doesn't count as a SKIP; run once
+  with the laptop key: PASS); `memories_test.go` covers the three acceptance criteria
+  (keyword-only "Ferries run hourly" and vector-only "the the the zebra" both returned for
+  "the ferry", the both-legs match first with 1/61 < score ≤ 2/61; `retracts=<id>` hides the
+  memory from search and `CurrentMemory` but not from `Memory`, and a retraction in another project
+  doesn't reach across; `latest_per=name` gives one per name and leaves out unnamed memories),
+  plus filters, validation, compare-and-swap, project isolation, and
+  `TestOpenWithoutPgvectorSaysHowToFix` (a throwaway non-superuser role owning a throwaway
+  database; role and database dropped afterwards). `TestFreshDatabaseIsTheBaseline` now expects
+  `004_memories.sql` and the `memories` table; `TestEmbedderFromEnv` in `main_test.go`.
+  Validation: `go vet ./...` clean; `BOB_TEST_DATABASE_URL=… go test ./... -count=1 -v | grep -cE
+  -- "--- (SKIP|FAIL)"` → `0`; `./stack test` → "all green". Laptop: `./stack build && ./stack
+  restart` *before* the extension existed stopped with `memory needs pgvector: as the postgres
+  superuser, run CREATE EXTENSION vector; in the bob database (ERROR: permission denied to create
+  extension "vector" (SQLSTATE 42501))` (the API connects as `app_bob`); then the ticket's
+  `CREATE EXTENSION IF NOT EXISTS vector` → `CREATE EXTENSION`, `./stack restart` → "ready",
+  `/healthz` → `ok`, `bob` has `memories`, `004_memories.sql` recorded, vector 0.8.6.
 
 ### T22: Memory MCP tools and the Overview list   [Status: pending | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_memory.go`: `memory_create`, `memory_search`, `memory_get`,
@@ -1745,3 +1796,10 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   and `NextQueuedRun` moves its `started_at` to now, so `LastCronRun` then counts firings missed
   during the outage from that start — they are neither caught up nor recorded as skipped (the
   schedule was busy anyway). Not changed.
+- **T21:** `.env.box` does not exist on the laptop yet, and `deploy/compose.yml` now requires
+  `OPENAI_API_KEY` (`:?`), so whoever writes `.env.box` (T16) must include it, and the box needs
+  `CREATE EXTENSION vector` in `bob` as the superuser before the first deploy with T21 (T25 already
+  plans that) — otherwise the API refuses to boot with the fix in its log. Also noticed: a stray
+  throwaway database `bob_test_1790624190133788648` on the local Postgres, created before this
+  ticket's first test run (not dropped — not mine; harmless, `DROP DATABASE … WITH (FORCE)` clears
+  it); and `gofmt -l` flags `api/cmd/bob/tools_drive_test.go` (pre-existing, untouched).

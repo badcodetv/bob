@@ -18,6 +18,9 @@
 //	BOB_DRIVE_TOKEN_<NAME>  optional, one per project: that project's Drive refresh token
 //	                   (scripts/drive-token). <NAME> as BOB_RUNTIME_TOKEN_<NAME> above. A project
 //	                   with none set has no Drive client and no drive_* MCP tools.
+//	OPENAI_API_KEY     embeddings for memory search (required)
+//	BOB_EMBEDDING_MODEL OpenAI embedding model (default text-embedding-3-small; changing it after
+//	                   memories exist worsens search over the old ones — they are not re-embedded)
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
 //	BOB_SESSION_SECRET signs session cookies and each chat's MCP token (required)
 //	BOB_PROJECT_MAP    who may sign in and which projects they use (required), JSON:
@@ -43,6 +46,7 @@ import (
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/drive"
+	"github.com/badcodetv/bob/internal/embed"
 	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
@@ -52,6 +56,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	embedder, err := embedderFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
 	dbURL := os.Getenv("BOB_DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("BOB_DATABASE_URL is required")
@@ -111,6 +119,7 @@ func main() {
 		broker:    broker.New(),
 		runtime:   runtime.NewManager(runtime.Config{Hosts: hosts, Tokens: tokens}),
 		drive:     driveClients,
+		embed:     embedder,
 		mcp:       mcp.New(),
 		turns:     map[string]context.CancelFunc{},
 		now:       time.Now,
@@ -190,6 +199,21 @@ func driveClientsFromEnv(ctx context.Context, getenv func(string) string, projec
 		clients[name] = c
 	}
 	return clients, nil
+}
+
+// embedderFromEnv builds the OpenAI embedder memory search needs. There is no keyword-only
+// fallback: a missing key stops Bob at boot rather than quietly storing memories search cannot
+// find by meaning.
+func embedderFromEnv(getenv func(string) string) (embed.Embedder, error) {
+	key := getenv("OPENAI_API_KEY")
+	if key == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is required: memories are embedded with OpenAI (%s) for search", embed.DefaultModel)
+	}
+	model := getenv("BOB_EMBEDDING_MODEL")
+	if model == "" {
+		model = embed.DefaultModel
+	}
+	return embed.OpenAI{Key: key, Model: model}, nil
 }
 
 // publicURL reads BOB_PUBLIC_URL, where people reach Bob. Links to chats are built on it by

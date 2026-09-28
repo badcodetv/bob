@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/badcodetv/bob/internal/embed"
 	"github.com/badcodetv/bob/internal/store"
 )
 
@@ -107,6 +108,22 @@ func TestPublicURL(t *testing.T) {
 		if _, err := publicURL(env(v)); err == nil || !strings.Contains(err.Error(), "BOB_PUBLIC_URL") {
 			t.Errorf("publicURL(%q) error = %v, want one naming BOB_PUBLIC_URL", v, err)
 		}
+	}
+}
+
+// OPENAI_API_KEY is required (memory embeddings); BOB_EMBEDDING_MODEL is optional.
+func TestEmbedderFromEnv(t *testing.T) {
+	env := func(vars map[string]string) func(string) string { return func(k string) string { return vars[k] } }
+	if _, err := embedderFromEnv(env(nil)); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Errorf("no key: err = %v, want one naming OPENAI_API_KEY", err)
+	}
+	e, err := embedderFromEnv(env(map[string]string{"OPENAI_API_KEY": "sk-x"}))
+	if o, ok := e.(embed.OpenAI); err != nil || !ok || o.Key != "sk-x" || o.Model != embed.DefaultModel {
+		t.Errorf("default = %#v, %v", e, err)
+	}
+	e, _ = embedderFromEnv(env(map[string]string{"OPENAI_API_KEY": "sk-x", "BOB_EMBEDDING_MODEL": "text-embedding-3-large"}))
+	if o, _ := e.(embed.OpenAI); o.Model != "text-embedding-3-large" {
+		t.Errorf("model = %q", o.Model)
 	}
 }
 

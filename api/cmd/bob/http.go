@@ -19,6 +19,7 @@ import (
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
 	"github.com/badcodetv/bob/internal/drive"
+	"github.com/badcodetv/bob/internal/embed"
 	"github.com/badcodetv/bob/internal/engines"
 	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/runtime"
@@ -43,6 +44,7 @@ type app struct {
 	runtime   containers
 	drive     map[string]*drive.Client // project → Drive client; absent = no Drive tools for it
 	mcp       *mcp.Server              // the tools agents call back into Bob with (POST /mcp)
+	embed     embed.Embedder           // memory embeddings (OPENAI_API_KEY); nil in tests that need none
 	now       func() time.Time
 
 	mu        sync.Mutex

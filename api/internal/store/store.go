@@ -55,6 +55,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return err
 	}
+	if err := s.needVector(ctx); err != nil {
+		return err
+	}
 	entries, err := migrations.ReadDir("migrations")
 	if err != nil {
 		return err
@@ -76,6 +79,24 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("migration %s: %w", e.Name(), err)
 		}
+	}
+	return nil
+}
+
+// needVector makes sure pgvector is installed before 004_memories.sql runs. Creating an extension
+// takes a superuser, which Bob's own database user is not, so when Bob cannot create it this says
+// who must — rather than failing inside the migration with Postgres's permission error.
+func (s *Store) needVector(ctx context.Context) error {
+	var done, installed bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '004_memories.sql'),
+		EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')`).Scan(&done, &installed); err != nil {
+		return err
+	}
+	if done || installed {
+		return nil
+	}
+	if _, err := s.db.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+		return fmt.Errorf("memory needs pgvector: as the postgres superuser, run CREATE EXTENSION vector; in the bob database (%v)", err)
 	}
 	return nil
 }

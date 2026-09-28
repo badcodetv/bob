@@ -264,7 +264,9 @@ func TestDriveFetchTamperedTokenIs403(t *testing.T) {
 	if isErr {
 		t.Fatal(text)
 	}
-	var out struct{ URL string `json:"url"` }
+	var out struct {
+		URL string `json:"url"`
+	}
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		t.Fatal(err)
 	}
