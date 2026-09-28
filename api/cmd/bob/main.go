@@ -13,6 +13,11 @@
 //	BOB_ADDR           listen address (default :8070)
 //	BOB_RUNTIME_HOSTS  local development only: project=host:port,… when Bob runs on the host and
 //	                   cannot resolve container names
+//	BOB_DRIVE_CLIENT_ID, BOB_DRIVE_CLIENT_SECRET  the OAuth client scripts/drive-token used to mint
+//	                   Drive tokens (required if any BOB_DRIVE_TOKEN_<NAME> is set)
+//	BOB_DRIVE_TOKEN_<NAME>  optional, one per project: that project's Drive refresh token
+//	                   (scripts/drive-token). <NAME> as BOB_RUNTIME_TOKEN_<NAME> above. A project
+//	                   with none set has no Drive client and no drive_* MCP tools.
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
 //	BOB_SESSION_SECRET signs session cookies and each chat's MCP token (required)
 //	BOB_PROJECT_MAP    who may sign in and which projects they use (required), JSON:
@@ -37,6 +42,7 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
+	"github.com/badcodetv/bob/internal/drive"
 	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
@@ -91,6 +97,11 @@ func main() {
 		log.Fatalf("BOB_RUNTIME_HOSTS: %v", err)
 	}
 
+	driveClients, err := driveClientsFromEnv(ctx, os.Getenv, names)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	app := &app{
 		auth:      signIn,
 		access:    people,
@@ -99,6 +110,7 @@ func main() {
 		store:     st,
 		broker:    broker.New(),
 		runtime:   runtime.NewManager(runtime.Config{Hosts: hosts, Tokens: tokens}),
+		drive:     driveClients,
 		mcp:       mcp.New(),
 		turns:     map[string]context.CancelFunc{},
 		now:       time.Now,
@@ -152,6 +164,30 @@ func projectsFromEnv(getenv func(string) string) (names []string, tokens map[str
 		return nil, nil, fmt.Errorf("BOB_PROJECTS is required: the projects Bob serves, comma-separated (e.g. enc,marketing)")
 	}
 	return names, tokens, nil
+}
+
+// driveClientsFromEnv builds a Drive client for each project that has a BOB_DRIVE_TOKEN_<NAME>
+// set. Most projects have none, and Bob starts exactly as before for them. A project that does
+// have one but is missing BOB_DRIVE_CLIENT_ID/BOB_DRIVE_CLIENT_SECRET (the OAuth client that
+// minted it) fails at boot, not on the first drive_* tool call.
+func driveClientsFromEnv(ctx context.Context, getenv func(string) string, projects []string) (map[string]*drive.Client, error) {
+	clientID, clientSecret := getenv("BOB_DRIVE_CLIENT_ID"), getenv("BOB_DRIVE_CLIENT_SECRET")
+	clients := map[string]*drive.Client{}
+	for _, name := range projects {
+		token := getenv(drive.TokenVar(name))
+		if token == "" {
+			continue
+		}
+		if clientID == "" || clientSecret == "" {
+			return nil, fmt.Errorf("%s is set for project %s: BOB_DRIVE_CLIENT_ID and BOB_DRIVE_CLIENT_SECRET are also required (the OAuth client scripts/drive-token used)", drive.TokenVar(name), name)
+		}
+		c, err := drive.New(ctx, clientID, clientSecret, token)
+		if err != nil {
+			return nil, fmt.Errorf("project %s: building Drive client: %w", name, err)
+		}
+		clients[name] = c
+	}
+	return clients, nil
 }
 
 // publicURL reads BOB_PUBLIC_URL, where people reach Bob. Links to chats are built on it by

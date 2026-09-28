@@ -1091,7 +1091,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   confirmed to exist and resolve correctly, so once Kai runs `docker exec -it bob-project-dev codex
   login --device-auth`, a Codex chat asking the same question should be the only remaining check.
 
-### T14: Drive client, OAuth client and token script   [Status: pending | Model: sonnet]
+### T14: Drive client, OAuth client and token script   [Status: in progress — code committed; waits on Kai's OAuth client + drive-token run | Model: sonnet]
 - **Scope:** **Human step (Kai)**: in a Google Cloud project, create an OAuth client of type
   "Desktop app", enable the Drive API, set the OAuth consent screen's publishing status to
   **"In production"** (an unverified app is fine for under 100 users; people click through the
@@ -1118,6 +1118,38 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Depends on:** T1
 - [ ] done
 - Notes:
+  `golang.org/x/oauth2@v0.30.0` and `google.golang.org/api/drive/v3@v0.244.0` added by `go get`
+  (letting it pick `@latest` bumped `go.mod`'s `go` directive to 1.26.0, which `golang:1.25-bookworm`
+  — this repo's build image — cannot compile; pinned to these versions instead, which keep `go
+  1.25.0`). `api/internal/drive/drive.go`: `New(ctx, clientID, secret, refreshToken string, opts
+  ...Option)` (the `ctx` param and variadic `Option`s are not in the ticket's exact signature —
+  needed so tests can override the token and API endpoints without a package-level var; production
+  callers just pass no options). `Option`s: `WithTokenEndpoint`, `WithAPIEndpoint` (test-only,
+  documented as such). A revoked/expired token is caught two ways: `errors.As` for
+  `*oauth2.RetrieveError{ErrorCode: "invalid_grant"}` (the token-exchange failure) and for
+  `*googleapi.Error{Code: 401}` (an access token that stops working mid-session) — both produce the
+  ticket's exact message. `drive_test.go`'s fake serves the OAuth token endpoint and the Drive REST
+  API from the same `httptest.Server`, covering: query escaping (backslash, `'`, `"`), the `corpora
+  allDrives` / `supportsAllDrives` / `includeItemsFromAllDrives` params, `List`'s parent and
+  empty-folder queries, `Read`'s three export MIME types (Docs→markdown, Sheets→CSV,
+  Slides→plain text) plus a `text/*` file read as bytes and an unreadable MIME type erroring with
+  "drive_fetch", `Download`, and both revoked-token cases above. `main.go`:
+  `driveClientsFromEnv(ctx, getenv, names)` builds a `map[string]*drive.Client`, one entry per
+  project with `BOB_DRIVE_TOKEN_<NAME>` set (`drive.TokenVar`, mirroring
+  `runtime.TokenVar`); fatal (naming both `BOB_DRIVE_CLIENT_ID`/`BOB_DRIVE_CLIENT_SECRET`) if a
+  token is set but the OAuth client id/secret is not. Stored on `app.drive` (a plain map, no
+  mutex — built once at boot and never written after, same as `app.runtime`), for T15's MCP tools
+  to key by the caller's project. No project has a Drive token today, so `driveClientsFromEnv`
+  returns an empty map and startup is exactly as before (`./stack build && ./stack restart` and
+  `curl http://127.0.0.1:8070/healthz` → 200, confirmed).
+  `scripts/drive-token`: no dependencies beyond Node 22's own `http`/`crypto`/`child_process`;
+  `node --check` on it directly refuses the shebang (no `.js` extension), so checked a copy in the
+  scratchpad instead (removed after). Not run against a real Google OAuth client — that needs
+  Kai's own Cloud project and consent screen (human step, skipped per this ticket's scope) — so the
+  manual "prints a refresh token for Kai's test account" step in Validation was not performed.
+  Validation: `./stack test` → ends `── all green`; `go vet ./...` → clean; `go test ./... -count=1
+  -v | grep -cE -- "--- (SKIP|FAIL)"` → `0`; `./stack build && ./stack restart` →
+  `curl http://127.0.0.1:8070/healthz` → `200`.
 
 ### T15: Drive MCP tools and signed fetch   [Status: pending | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_drive.go`: `drive_search`, `drive_list`, `drive_read`,
@@ -1505,3 +1537,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   since Codex isn't logged in yet. Left as-is per the ticket's literal text; flagging for whoever
   next touches Codex's effort list in case it's worth trimming `minimal` (or adding `max`/`ultra`,
   which every "list"-visibility model does support) once a live Codex chat can be checked.
+- **T14:** plain `go get golang.org/x/oauth2@latest google.golang.org/api/drive/v3@latest` bumps
+  `api/go.mod`'s `go` directive to 1.26.0, which the `golang:1.25-bookworm` image in this repo's
+  `Dockerfile` cannot build. Fixed by pinning to `golang.org/x/oauth2@v0.30.0` and
+  `google.golang.org/api/drive/v3@v0.244.0` (both current enough for `drive.readonly` and PKCE;
+  `go.mod`'s `go` directive stayed `1.25.0`). Worth remembering for any later `go get` in this repo
+  until the `Dockerfile`'s Go image is bumped on purpose.

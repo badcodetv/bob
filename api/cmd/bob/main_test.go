@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -53,6 +54,40 @@ func TestProjectsFromEnv(t *testing.T) {
 		if _, _, err := projectsFromEnv(env(c.env)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("projectsFromEnv(%v) error = %v, want one naming %s", c.env, err, c.want)
 		}
+	}
+}
+
+// driveClientsFromEnv builds a Drive client only for a project with a BOB_DRIVE_TOKEN_<NAME>, and
+// fails at boot (naming both required variables) if the OAuth client that minted it is missing —
+// no project has a Drive token today, so the zero-token case must be a no-op.
+func TestDriveClientsFromEnv(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	ctx := context.Background()
+
+	clients, err := driveClientsFromEnv(ctx, env(map[string]string{}), []string{"enc", "marketing"})
+	if err != nil || len(clients) != 0 {
+		t.Errorf("no tokens set: clients = %v, err = %v; want none, no error", clients, err)
+	}
+
+	clients, err = driveClientsFromEnv(ctx, env(map[string]string{
+		"BOB_DRIVE_CLIENT_ID":     "id",
+		"BOB_DRIVE_CLIENT_SECRET": "secret",
+		"BOB_DRIVE_TOKEN_ENC":     "refresh-token",
+	}), []string{"enc", "marketing"})
+	if err != nil {
+		t.Fatalf("driveClientsFromEnv: %v", err)
+	}
+	if _, ok := clients["enc"]; !ok {
+		t.Errorf("clients = %v, want enc", clients)
+	}
+	if _, ok := clients["marketing"]; ok {
+		t.Errorf("clients = %v, marketing has no token and should have no client", clients)
+	}
+
+	if _, err := driveClientsFromEnv(ctx, env(map[string]string{
+		"BOB_DRIVE_TOKEN_ENC": "refresh-token",
+	}), []string{"enc"}); err == nil || !strings.Contains(err.Error(), "BOB_DRIVE_CLIENT_ID") {
+		t.Errorf("missing client id/secret: err = %v, want it to name BOB_DRIVE_CLIENT_ID", err)
 	}
 }
 

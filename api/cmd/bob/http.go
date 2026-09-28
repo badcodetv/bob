@@ -18,6 +18,7 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
+	"github.com/badcodetv/bob/internal/drive"
 	"github.com/badcodetv/bob/internal/engines"
 	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/runtime"
@@ -40,7 +41,8 @@ type app struct {
 	store     *store.Store
 	broker    *broker.Broker
 	runtime   containers
-	mcp       *mcp.Server // the tools agents call back into Bob with (POST /mcp)
+	drive     map[string]*drive.Client // project → Drive client; absent = no Drive tools for it
+	mcp       *mcp.Server              // the tools agents call back into Bob with (POST /mcp)
 	now       func() time.Time
 
 	mu        sync.Mutex

@@ -1,0 +1,140 @@
+#!/usr/bin/env node
+// Mints a Google Drive refresh token for one project: loopback OAuth with PKCE, scope
+// drive.readonly, access_type=offline&prompt=consent so Google always issues a refresh token
+// (without prompt=consent, a second run for the same Google account can come back with none).
+// No dependencies — only Node 22's own http, crypto and child_process.
+//
+//   BOB_DRIVE_CLIENT_ID=… BOB_DRIVE_CLIENT_SECRET=… node scripts/drive-token
+//
+// Opens a browser to Google's consent screen, then a local server on 127.0.0.1 catches the
+// redirect. Prints the refresh token and the signed-in account's email — put the token in .env as
+// BOB_DRIVE_TOKEN_<NAME> (see deploy/env.example).
+import http from 'node:http'
+import crypto from 'node:crypto'
+import { execFile } from 'node:child_process'
+
+const clientId = process.env.BOB_DRIVE_CLIENT_ID
+const clientSecret = process.env.BOB_DRIVE_CLIENT_SECRET
+if (!clientId || !clientSecret) {
+  console.error('set BOB_DRIVE_CLIENT_ID and BOB_DRIVE_CLIENT_SECRET (the OAuth client\'s id and secret; see design/2026-09-28-foundation-plan.md T14)')
+  process.exit(1)
+}
+
+const SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
+
+// PKCE: a random verifier, and its SHA-256 challenge sent up front so the eventual code exchange
+// must present the same verifier — the loopback redirect alone is not proof of possession.
+const verifier = base64url(crypto.randomBytes(32))
+const challenge = base64url(crypto.createHash('sha256').update(verifier).digest())
+const state = base64url(crypto.randomBytes(16))
+
+function base64url(buf) {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function main() {
+  const { server, redirectUri, code } = await listenForCode()
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+  authUrl.searchParams.set('client_id', clientId)
+  authUrl.searchParams.set('redirect_uri', redirectUri)
+  authUrl.searchParams.set('response_type', 'code')
+  authUrl.searchParams.set('scope', SCOPE)
+  authUrl.searchParams.set('access_type', 'offline')
+  authUrl.searchParams.set('prompt', 'consent')
+  authUrl.searchParams.set('code_challenge', challenge)
+  authUrl.searchParams.set('code_challenge_method', 'S256')
+  authUrl.searchParams.set('state', state)
+
+  console.log('opening a browser to sign in and grant read-only Drive access…')
+  console.log(authUrl.toString())
+  openBrowser(authUrl.toString())
+
+  const authCode = await code
+  server.close()
+
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code: authCode,
+      code_verifier: verifier,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+    }),
+  })
+  const tokenBody = await tokenRes.json()
+  if (!tokenRes.ok) {
+    console.error(`token exchange failed: ${tokenRes.status} ${JSON.stringify(tokenBody)}`)
+    process.exit(1)
+  }
+  if (!tokenBody.refresh_token) {
+    console.error('Google returned no refresh_token. Someone probably already granted this app consent without prompt=consent; re-run this script (it always asks) or revoke access at https://myaccount.google.com/permissions and try again.')
+    process.exit(1)
+  }
+
+  // The drive.readonly scope alone is enough to ask Drive who is signed in, so this needs no
+  // extra scope (e.g. userinfo.email) just to print the account.
+  const aboutRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user', {
+    headers: { Authorization: `Bearer ${tokenBody.access_token}` },
+  })
+  const about = await aboutRes.json()
+  const email = about?.user?.emailAddress ?? '(unknown — about?fields=user did not return one)'
+
+  console.log('')
+  console.log(`account: ${email}`)
+  console.log(`refresh token: ${tokenBody.refresh_token}`)
+  console.log('')
+  console.log('put it in .env as BOB_DRIVE_TOKEN_<NAME> (project name, upper-cased, - as _), e.g. BOB_DRIVE_TOKEN_ENC=…')
+}
+
+// listenForCode starts a loopback HTTP server on an OS-assigned port and resolves once Google's
+// redirect lands on it, or rejects if the user denies consent or state does not match.
+function listenForCode() {
+  return new Promise((resolve, reject) => {
+    let codeResolve, codeReject
+    const code = new Promise((res, rej) => { codeResolve = res; codeReject = rej })
+
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1')
+      if (url.pathname !== '/') {
+        res.writeHead(404).end()
+        return
+      }
+      const err = url.searchParams.get('error')
+      const gotState = url.searchParams.get('state')
+      const gotCode = url.searchParams.get('code')
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      if (err) {
+        res.end(`<p>Google returned an error: ${err}. You can close this tab.</p>`)
+        codeReject(new Error(`Google returned error=${err}`))
+        return
+      }
+      if (gotState !== state) {
+        res.end('<p>state mismatch — close this tab and re-run scripts/drive-token.</p>')
+        codeReject(new Error('state mismatch on the OAuth redirect'))
+        return
+      }
+      res.end('<p>Signed in. You can close this tab and go back to the terminal.</p>')
+      codeResolve(gotCode)
+    })
+
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address()
+      resolve({ server, redirectUri: `http://127.0.0.1:${port}/`, code })
+    })
+    server.on('error', reject)
+  })
+}
+
+function openBrowser(url) {
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+  execFile(cmd, [url], () => { /* best-effort: the URL is printed either way */ })
+}
+
+main().catch((err) => {
+  console.error(err.message ?? err)
+  process.exit(1)
+})
