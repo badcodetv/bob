@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/badcodetv/bob/internal/auth"
-	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/schedule"
 	"github.com/badcodetv/bob/internal/store"
 )
@@ -98,8 +97,8 @@ func (a *app) fire(ctx context.Context, sch store.Schedule, trigger string) (sto
 	return run, nil
 }
 
-// execute is one run: pull git, start a session on the worker with the schedule's message, wait
-// for the turn, pull git again so anything the run pushed is visible, then prune old sessions.
+// execute is one run: start a session on the schedule's worker with its message, wait for the
+// turn, then prune old sessions.
 func (a *app) execute(ctx context.Context, sch store.Schedule, run store.Run) {
 	defer a.hold(sch.Project)()
 	status, detail := "failed", ""
@@ -108,35 +107,9 @@ func (a *app) execute(ctx context.Context, sch store.Schedule, run store.Run) {
 			log.Printf("schedule %s/%s run %d: %v", sch.Project, sch.Name, run.ID, err)
 		}
 	}()
-	p, err := a.store.Project(ctx, sch.Project)
+	worker, err := a.store.WorkerByID(ctx, sch.WorkerID)
 	if err != nil {
-		detail = err.Error()
-		return
-	}
-	base, err := a.runtime.Ensure(ctx, p)
-	if err != nil {
-		detail = err.Error()
-		return
-	}
-	list, err := runtime.Workers(ctx, base, true)
-	if err == nil && !list.Sync.OK {
-		err = errors.New(list.Sync.Error)
-	}
-	if err != nil {
-		detail = "git sync failed: " + err.Error()
-		return
-	}
-	var worker *runtime.Worker
-	for i := range list.Workers {
-		if list.Workers[i].Name == sch.Worker {
-			worker = &list.Workers[i]
-		}
-	}
-	if worker == nil {
-		detail = fmt.Sprintf("worker %q not found in git", sch.Worker)
-		if list.Error != "" {
-			detail += " (" + list.Error + ")"
-		}
+		detail = fmt.Sprintf("worker %q: %v", sch.Worker, err)
 		return
 	}
 	sess, err := a.store.CreateSession(ctx, sch.Project, &sch.WorkerID, worker.Name, worker.Engine, "", "")
@@ -155,13 +128,6 @@ func (a *app) execute(ctx context.Context, sch store.Schedule, run store.Run) {
 		detail = err.Error()
 	} else {
 		status = "ok"
-	}
-
-	if after, err := runtime.Workers(ctx, base, true); err != nil || !after.Sync.OK {
-		if err == nil {
-			err = errors.New(after.Sync.Error)
-		}
-		detail = strings.TrimPrefix(detail+"; git sync after the run failed: "+err.Error(), "; ")
 	}
 
 	expired, err := a.store.ExpiredScheduledSessions(ctx, sch.ID, sch.KeepSessions)

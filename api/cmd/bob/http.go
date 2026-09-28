@@ -44,7 +44,7 @@ type app struct {
 	mu        sync.Mutex
 	turns     map[string]context.CancelFunc // session id → running turn
 	scheduled sync.WaitGroup                // scheduled runs in progress
-	active    map[string]int                // project → turns, scheduled runs and syncs in progress
+	active    map[string]int                // project → turns and scheduled runs in progress
 }
 
 // hold marks work in progress in a project, so a deploy can wait for it instead of cutting it
@@ -92,8 +92,6 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	}
 	handle("GET /api/projects", signedIn, a.listProjects)
 	handle("GET /api/projects/{project}", member, a.getProject)
-	handle("POST /api/projects/{project}/sync", member, a.syncProject)
-	handle("GET /api/projects/{project}/workers", member, a.listWorkers)
 	handle("GET /api/projects/{project}/sessions", member, a.listSessions)
 	handle("POST /api/projects/{project}/sessions", member, a.createSession)
 	handle("GET /api/sessions/{session}", member, a.getSession)
@@ -249,7 +247,7 @@ func (a *app) getProject(w http.ResponseWriter, r *http.Request) {
 	reply(w, p, err)
 }
 
-// busy names the projects with work in progress — a turn, a scheduled run or a git sync. A deploy
+// busy names the projects with work in progress — a turn or a scheduled run. A deploy
 // script waits on it, because restarting a project's container cuts off whatever it is doing.
 func (a *app) busy(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
@@ -260,29 +258,6 @@ func (a *app) busy(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	sort.Strings(projects)
 	reply(w, map[string]any{"busy": projects}, nil)
-}
-
-func (a *app) listWorkers(w http.ResponseWriter, r *http.Request) {
-	list, err := a.workers(r.Context(), r.PathValue("project"), false)
-	reply(w, list, err)
-}
-
-func (a *app) syncProject(w http.ResponseWriter, r *http.Request) {
-	defer a.hold(r.PathValue("project"))()
-	list, err := a.workers(r.Context(), r.PathValue("project"), true)
-	reply(w, list, err)
-}
-
-func (a *app) workers(ctx context.Context, project string, sync bool) (runtime.WorkerList, error) {
-	p, err := a.store.Project(ctx, project)
-	if err != nil {
-		return runtime.WorkerList{}, err
-	}
-	base, err := a.runtime.Ensure(ctx, p)
-	if err != nil {
-		return runtime.WorkerList{}, err
-	}
-	return runtime.Workers(ctx, base, sync)
 }
 
 func (a *app) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -296,20 +271,17 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := r.PathValue("project")
-	list, err := a.workers(r.Context(), project, false)
+	wk, err := a.store.Worker(r.Context(), project, body.Worker)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, fmt.Sprintf("project %s has no worker named %q", project, body.Worker), http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		reply(w, nil, err)
 		return
 	}
-	for _, wk := range list.Workers {
-		if wk.Name == body.Worker {
-			// Workers still come from git here, so the session has no worker row to point at.
-			s, err := a.store.CreateSession(r.Context(), project, nil, wk.Name, wk.Engine, body.Model, body.Effort)
-			reply(w, s, err)
-			return
-		}
-	}
-	http.Error(w, fmt.Sprintf("project %s has no worker named %q", project, body.Worker), http.StatusBadRequest)
+	s, err := a.store.CreateSession(r.Context(), project, &wk.ID, wk.Name, wk.Engine, body.Model, body.Effort)
+	reply(w, s, err)
 }
 
 func (a *app) getSession(w http.ResponseWriter, r *http.Request) {
@@ -326,9 +298,8 @@ func (a *app) updateSession(w http.ResponseWriter, r *http.Request) {
 	reply(w, s, err)
 }
 
-// deleteSession stops any running turn, removes the session's worktree in its project
-// container, then deletes the session and its events. A worktree that cannot be removed
-// (container gone, say) does not keep the session alive.
+// deleteSession stops any running turn, then deletes the session and its events. The project
+// container keeps nothing per session: every chat works in the one shared folder.
 func (a *app) deleteSession(w http.ResponseWriter, r *http.Request) {
 	sess, err := a.store.Session(r.Context(), r.PathValue("session"))
 	if err != nil {
@@ -340,13 +311,6 @@ func (a *app) deleteSession(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) removeSession(ctx context.Context, sess store.Session) error {
 	a.endTurn(sess.ID)
-	if p, err := a.store.Project(ctx, sess.Project); err == nil {
-		if base, err := a.runtime.Ensure(ctx, p); err == nil {
-			if err := runtime.RemoveSession(ctx, base, sess.ID); err != nil {
-				log.Printf("session %s: removing worktree: %v", sess.ID, err)
-			}
-		}
-	}
 	return a.store.DeleteSession(ctx, sess.ID)
 }
 
@@ -507,7 +471,8 @@ func (a *app) endTurn(sessionID string) {
 }
 
 // runTurn runs one turn as user: the runtime gives the agent's tools that person's email and
-// name, and makes them the author of commits made during the turn.
+// name, and makes them the author of commits made during the turn. The worker is read afresh
+// from the database, so a change to it takes effect on the next message.
 // It returns nil when the turn finished (bob.turn_done), and the failure otherwise (bob.turn_failed).
 func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, text string) (failure error) {
 	defer a.endTurn(sess.ID)
@@ -517,6 +482,12 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 		payload, _ := json.Marshal(map[string]string{"error": err.Error()})
 		_, _ = a.record(context.Background(), store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.turn_failed", Payload: payload})
 	}
+	turn, err := a.turnRequest(ctx, sess)
+	if err != nil {
+		fail(err)
+		return
+	}
+	turn.Text, turn.UserEmail, turn.UserName = text, user.Email, user.Name
 	p, err := a.store.Project(ctx, sess.Project)
 	if err != nil {
 		fail(err)
@@ -528,8 +499,7 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 		return
 	}
 	var done *runtime.TurnLine
-	err = runtime.RunTurn(ctx, base, runtime.TurnRequest{SessionID: sess.ID, Worker: sess.Worker, Text: text, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort,
-		UserEmail: user.Email, UserName: user.Name},
+	err = runtime.RunTurn(ctx, base, turn,
 		func(line runtime.TurnLine) error {
 			if line.Done {
 				done = &line
@@ -561,6 +531,31 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 		_, _ = a.record(context.Background(), store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.turn_done", Payload: json.RawMessage(`{}`)})
 	}
 	return failure
+}
+
+// turnRequest is what a session's next turn runs with: its worker's engine, tools and prompt, and
+// the session's model and effort where they override the worker's. The system prompt is the
+// worker's prompt alone until Bob composes one (the environment note and the project prompt too).
+func (a *app) turnRequest(ctx context.Context, sess store.Session) (runtime.TurnRequest, error) {
+	t := runtime.TurnRequest{SessionID: sess.ID, Engine: sess.Engine, Resume: sess.HarnessSessionID, Model: sess.Model, Effort: sess.Effort}
+	if sess.WorkerID == nil {
+		if sess.Worker != "" {
+			return t, fmt.Errorf("worker %q has been deleted; this chat can be read but takes no more messages", sess.Worker)
+		}
+		return t, nil // a plain chat: nothing but the session's own settings
+	}
+	wk, err := a.store.WorkerByID(ctx, *sess.WorkerID)
+	if err != nil {
+		return t, fmt.Errorf("worker %q: %w", sess.Worker, err)
+	}
+	if t.Model == "" {
+		t.Model = wk.Model
+	}
+	if t.Effort == "" {
+		t.Effort = wk.Effort
+	}
+	t.Tools, t.SystemPrompt = wk.Tools, wk.Prompt
+	return t, nil
 }
 
 // record stores an event and publishes it to live watchers.

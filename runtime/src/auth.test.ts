@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkAuth, runtimeToken } from './auth.js'
+import * as auth from './auth.js'
+import { checkAuth } from './auth.js'
 
 const basic = (s: string) => 'Basic ' + Buffer.from(s).toString('base64')
 
@@ -15,9 +16,12 @@ test('only basic auth with the token passes', () => {
   assert.equal(checkAuth(basic('bob:'), ''), false, 'an empty token never matches')
 })
 
-test('the project password matches what Bob derives, and differs per project', () => {
-  // Fixed vector: api/internal/runtime.Token([]byte("testkey1234567890"), "bob-examples").
-  assert.equal(runtimeToken('testkey1234567890', 'bob-examples'),
-    'cca51a8a1d298490b7edcbf4018c46b0d15e10c5b6b11e7a5852c2f918b03543');
-  assert.notEqual(runtimeToken('k', 'a'), runtimeToken('k', 'b'));
-});
+test('the password is BOB_RUNTIME_TOKEN itself, compared as given', () => {
+  // What `openssl rand -hex 32` makes, and what Bob sends as bob:<token>.
+  const token = '9f2c4e7a1b3d5f6071829304a5b6c7d8e9f00112233445566778899aabbccddee'
+  assert.equal(checkAuth(basic(`bob:${token}`), token), true)
+  assert.equal(checkAuth(basic(`bob:${token.toUpperCase()}`), token), false, 'no normalising')
+  assert.equal(checkAuth(basic('bob:a:b'), 'a:b'), true, 'only the first colon splits user from password')
+  // Nothing derives the password any more: each project's token is its own random value.
+  assert.equal('runtimeToken' in auth, false)
+})

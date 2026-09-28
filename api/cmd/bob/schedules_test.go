@@ -16,6 +16,7 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
+	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -69,16 +70,11 @@ func testStore(t *testing.T) *store.Store {
 var testDatabases = map[*store.Store]string{}
 
 // insertWorker adds a worker with raw SQL and returns its id. Bob has no worker routes or store
-// functions yet; sessions and schedules only need the row to point at. The same helper is in
+// writes yet; sessions and schedules only need the row to point at. The same helper is in
 // api/internal/store/store_test.go (test helpers cannot cross packages).
 func insertWorker(t *testing.T, st *store.Store, project, name, engine string) (id string) {
 	t.Helper()
-	db, err := pgx.Connect(t.Context(), testDatabases[st])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close(context.Background())
-	err = db.QueryRow(t.Context(), `INSERT INTO workers (project, name, engine, created_by, updated_by)
+	err := testDB(t, st).QueryRow(t.Context(), `INSERT INTO workers (project, name, engine, created_by, updated_by)
 		VALUES ($1, $2, $3, 'test', 'test') RETURNING id`, project, name, engine).Scan(&id)
 	if err != nil {
 		t.Fatal(err)
@@ -86,17 +82,35 @@ func insertWorker(t *testing.T, st *store.Store, project, name, engine string) (
 	return id
 }
 
-// fakeRuntime is a project container's runtime server: it counts git syncs, can fail them, and
-// holds each turn until released when hold is set.
+// execSQL runs raw SQL against a test store's database: for what Bob cannot yet change through
+// its own routes, such as a worker's prompt and settings.
+func execSQL(t *testing.T, st *store.Store, sql string, args ...any) {
+	t.Helper()
+	if _, err := testDB(t, st).Exec(t.Context(), sql, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testDB(t *testing.T, st *store.Store) *pgx.Conn {
+	t.Helper()
+	db, err := pgx.Connect(t.Context(), testDatabases[st])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close(context.Background()) })
+	return db
+}
+
+// fakeRuntime is a project container's runtime server: it records each turn it is sent, can
+// fail them, and holds each turn until released when hold is set. Anything else it is asked for
+// is recorded as unexpected — the runtime has no other routes Bob should call.
 type fakeRuntime struct {
-	mu        sync.Mutex
-	syncs     int
-	syncError string
-	workers   []string
-	turnError string
-	hold      chan struct{}
-	started   chan string // session ids, as turns start
-	removed   []string
+	mu         sync.Mutex
+	turnError  string
+	hold       chan struct{}
+	started    chan string // session ids, as turns start
+	turns      []runtime.TurnRequest
+	unexpected []string
 }
 
 func (f *fakeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -104,21 +118,10 @@ func (f *fakeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	switch {
 	case r.URL.Path == "/health":
-	case r.URL.Path == "/workers" || r.URL.Path == "/sync":
-		if r.URL.Path == "/sync" {
-			f.syncs++
-		}
-		ws := []map[string]string{}
-		for _, name := range f.workers {
-			ws = append(ws, map[string]string{"name": name, "engine": "claude"})
-		}
-		sync := map[string]any{"ok": f.syncError == "", "error": f.syncError, "commit": "abc"}
-		json.NewEncoder(w).Encode(map[string]any{"sync": sync, "workers": ws})
-	case r.URL.Path == "/turns":
-		var body struct {
-			SessionID string `json:"session_id"`
-		}
+	case r.Method == http.MethodPost && r.URL.Path == "/turns":
+		var body runtime.TurnRequest
 		json.NewDecoder(r.Body).Decode(&body)
+		f.turns = append(f.turns, body)
 		hold, turnError := f.hold, f.turnError
 		if f.started != nil {
 			f.started <- body.SessionID
@@ -130,18 +133,17 @@ func (f *fakeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"engine":"claude","event":{"type":"system","subtype":"init","session_id":"h-%s"}}`+"\n", body.SessionID)
 		fmt.Fprintf(w, `{"done":true,"harness_session_id":"h-%s","error":%q}`+"\n", body.SessionID, turnError)
 		f.mu.Lock()
-	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/sessions/"):
-		f.removed = append(f.removed, strings.TrimPrefix(r.URL.Path, "/sessions/"))
-		w.Write([]byte(`{"ok":true}`))
 	default:
+		f.unexpected = append(f.unexpected, r.Method+" "+r.URL.Path)
 		http.NotFound(w, r)
 	}
 }
 
-func (f *fakeRuntime) count() (syncs int, removed []string) {
+// sent returns the turns the runtime has been sent, and any other requests it was sent.
+func (f *fakeRuntime) sent() (turns []runtime.TurnRequest, unexpected []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.syncs, append([]string(nil), f.removed...)
+	return append([]runtime.TurnRequest(nil), f.turns...), append([]string(nil), f.unexpected...)
 }
 
 type fakeContainers struct{ base string }
@@ -159,12 +161,10 @@ type clock struct {
 func (c *clock) now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
 func (c *clock) set(t time.Time) { c.mu.Lock(); c.t = t; c.mu.Unlock() }
 
-// newScheduleApp serves project wolf, whose worker "researcher" is both in the database (what a
-// schedule points at) and in the fake runtime's git folder (what a run still reads, until workers
-// come from the database alone). researcherID is the database row's id.
+// newScheduleApp serves project wolf, with one worker, "researcher". researcherID is its id.
 func newScheduleApp(t *testing.T) (*app, *fakeRuntime, *clock) {
 	st := testStore(t)
-	rt := &fakeRuntime{workers: []string{"researcher"}}
+	rt := &fakeRuntime{}
 	srv := httptest.NewServer(rt)
 	t.Cleanup(srv.Close)
 	c := &clock{t: time.Now()}
@@ -213,7 +213,7 @@ func create(t *testing.T, a *app, x store.Schedule) store.Schedule {
 	return x
 }
 
-func TestScheduleNoOverlapAndPostRunSync(t *testing.T) {
+func TestScheduleNoOverlap(t *testing.T) {
 	a, rt, c := newScheduleApp(t)
 	rt.hold, rt.started = make(chan struct{}), make(chan string, 4)
 	sch := create(t, a, store.Schedule{Name: "every-15", Cron: "*/15 * * * *"})
@@ -234,9 +234,6 @@ func TestScheduleNoOverlapAndPostRunSync(t *testing.T) {
 	if run, err := a.fire(t.Context(), sch, "manual"); err != nil || run.Status != "skipped" {
 		t.Errorf("manual run during a run: %+v, %v", run, err)
 	}
-	if syncs, _ := rt.count(); syncs != 1 {
-		t.Errorf("syncs before the turn finished = %d, want 1", syncs)
-	}
 
 	close(rt.hold)
 	a.scheduled.Wait()
@@ -247,8 +244,8 @@ func TestScheduleNoOverlapAndPostRunSync(t *testing.T) {
 	if rs[0].SessionID == nil || *rs[0].SessionID != sessionID || rs[0].FinishedAt == nil {
 		t.Errorf("finished run: %+v", rs[0])
 	}
-	if syncs, _ := rt.count(); syncs != 2 {
-		t.Errorf("syncs = %d, want 2 (before and after the run)", syncs)
+	if turns, unexpected := rt.sent(); len(turns) != 1 || len(unexpected) != 0 {
+		t.Errorf("runtime was sent %d turn(s) and %v, want one turn and nothing else", len(turns), unexpected)
 	}
 	sess, _ := a.store.Session(t.Context(), sessionID)
 	if sess.Worker != "researcher" || sess.HarnessSessionID != "h-"+sessionID {
@@ -322,15 +319,7 @@ func TestScheduleFailuresAndPruning(t *testing.T) {
 		return rs[len(rs)-1]
 	}
 
-	rt.syncError = "fatal: repository not found"
-	if r := fire(); r.Status != "failed" || r.SessionID != nil || r.Detail != "git sync failed: fatal: repository not found" {
-		t.Errorf("sync failure: %+v", r)
-	}
-	rt.syncError, rt.workers = "", []string{"someone-else"}
-	if r := fire(); r.Status != "failed" || r.Detail != `worker "researcher" not found in git` {
-		t.Errorf("missing worker: %+v", r)
-	}
-	rt.workers, rt.turnError = []string{"researcher"}, "model overloaded"
+	rt.turnError = "model overloaded"
 	failed := fire()
 	if failed.Status != "failed" || failed.Detail != "model overloaded" || failed.SessionID == nil {
 		t.Errorf("turn failure: %+v", failed)
@@ -341,18 +330,19 @@ func TestScheduleFailuresAndPruning(t *testing.T) {
 	if ok.Status != "ok" {
 		t.Errorf("ok run: %+v", ok)
 	}
-	// keep_sessions 1: the failed run's session was deleted with its worktree, the newest kept.
+	// keep_sessions 1: the failed run's session was deleted, the newest kept. Deleting a session
+	// is Bob's alone: the runtime keeps nothing per session.
 	if _, err := a.store.Session(t.Context(), *failed.SessionID); err != store.ErrNotFound {
 		t.Errorf("old session still there: %v", err)
 	}
-	if _, removed := rt.count(); len(removed) != 1 || removed[0] != *failed.SessionID {
-		t.Errorf("worktrees removed: %v", removed)
+	if _, unexpected := rt.sent(); len(unexpected) != 0 {
+		t.Errorf("runtime was asked for %v", unexpected)
 	}
 	if _, err := a.store.Session(t.Context(), *ok.SessionID); err != nil {
 		t.Errorf("newest session: %v", err)
 	}
-	if rs := runs(t, a, sch); rs[2].SessionID != nil {
-		t.Errorf("a pruned session's run should lose its link: %+v", rs[2])
+	if rs := runs(t, a, sch); rs[0].SessionID != nil {
+		t.Errorf("a pruned session's run should lose its link: %+v", rs[0])
 	}
 }
 

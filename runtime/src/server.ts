@@ -2,42 +2,37 @@
 // Every request must carry this project's password as basic auth (checkAuth): containers of
 // other projects can reach this port over the Docker network, and must not be able to use it.
 //
-// The password is derived here, from BOB_RUNTIME_KEY and the project's name, the same way Bob
-// derives it. Nothing writes it down: the compose file carries the key, which is shared, and the
-// name, which is not a secret.
+// The password is BOB_RUNTIME_TOKEN, this project's own random value; Bob holds the same value as
+// BOB_RUNTIME_TOKEN_<NAME>. It is taken out of the environment at startup, so nothing started from
+// here — harnesses, the agent's tools — can read it and drive this server.
+//
+// The runtime keeps no config: each turn brings its engine, model, effort, tools and system prompt,
+// read and composed by Bob's API. Every chat of the project works in one shared folder, /project/work.
 //
 //   GET  /health
-//   GET  /workers                      the project's workers and bob.md settings, plus the last sync
-//   POST /sync                         pull the project's git folder again
-//   DELETE /sessions/<id>              remove a session's worktree and branch
-//   GET  /files/<path>                 a file from the synced checkout, or a directory's {entries}
-//   POST /turns {session_id, worker, text, resume?, model?, effort?, user_email?, user_name?}
+//   GET  /files/<path>                 a file from /project/work, or a directory's {entries}
+//   POST /turns {session_id, engine, model?, effort?, tools?, system_prompt, mcp_token, text,
+//                resume?, user_email?, user_name?}                                  (see turn.ts)
 //        → application/x-ndjson: {"engine", "event"} per harness event, then
 //          {"done": true, "harness_session_id"} or {"done": true, "error"}
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { pipeline } from 'node:stream';
 import { join } from 'node:path';
-import { loadWorkers, type Worker } from './workers.js';
-import { loadProject, NO_PROJECT, type Project } from './project.js';
 import { runClaudeTurn } from './claude.js';
-import { prepareWorkdir, removeWorkdir } from './workdir.js';
 import { listDir, openFile, resolveRepoPath } from './files.js';
-import { checkAuth, runtimeToken } from './auth.js';
-import type { Turn, TurnResult } from './turn.js';
+import { checkAuth } from './auth.js';
+import { parseTurn, type Turn, type TurnResult } from './turn.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
-const KEY = process.env.BOB_RUNTIME_KEY ?? '';
-const NAME = process.env.BOB_PROJECT_NAME ?? '';
-// Nothing started from here (harnesses, their tools, git sync) inherits the key.
-delete process.env.BOB_RUNTIME_KEY;
-if (!KEY || !NAME) {
-  console.error('BOB_RUNTIME_KEY and BOB_PROJECT_NAME are required; refusing to serve');
+const TOKEN = process.env.BOB_RUNTIME_TOKEN ?? '';
+// Where Bob's API is, for the MCP server each turn is given (from T9 on).
+const API_URL = process.env.BOB_API_URL ?? '';
+// Nothing started from here (harnesses, their tools) inherits the token.
+delete process.env.BOB_RUNTIME_TOKEN;
+if (!TOKEN || !API_URL) {
+  console.error('BOB_RUNTIME_TOKEN and BOB_API_URL are required; refusing to serve');
   process.exit(1);
 }
-const TOKEN = runtimeToken(KEY, NAME);
 
 // Draining: a deploy stops this container, and a turn cut off half way is a chat that stops
 // mid-sentence and a scheduled run recorded as failed with no retry. On SIGTERM we stop accepting
@@ -47,10 +42,10 @@ let draining = false;
 let inFlight = 0;
 let onDrained: (() => void) | null = null;
 const PROJECT_DIR = process.env.BOB_PROJECT_DIR ?? '/project';
-const CONFIG_DIR = join(PROJECT_DIR, 'repo', process.env.BOB_REPO_SUBFOLDER ?? '');
+const WORK_DIR = join(PROJECT_DIR, 'work');
 
-type Driver = (worker: Worker, project: Project, turn: Turn, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
-const drivers: Partial<Record<Worker['engine'], Driver>> = { claude: runClaudeTurn };
+type Driver = (turn: Turn, emit: (event: unknown) => void, signal: AbortSignal) => Promise<TurnResult>;
+const drivers: Record<string, Driver> = { claude: runClaudeTurn };
 
 createServer((req, res) => {
   handle(req, res).catch((err) => {
@@ -58,7 +53,7 @@ createServer((req, res) => {
     if (!res.headersSent) sendJSON(res, 500, { error: String(err?.message ?? err) });
     else res.end();
   });
-}).listen(PORT, () => console.log(`bob-runtime listening on :${PORT}, config ${CONFIG_DIR}`));
+}).listen(PORT, () => console.log(`bob-runtime listening on :${PORT}, working in ${WORK_DIR}, Bob at ${API_URL}`));
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
@@ -74,70 +69,34 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (!checkAuth(req.headers.authorization, TOKEN)) return sendJSON(res, 401, { error: 'unauthorized' });
   // /health keeps answering while draining, but says so, so Bob can tell "stopping" from "broken".
   if (req.method === 'GET' && req.url === '/health') return sendJSON(res, 200, { ok: true, draining });
-  if (req.method === 'GET' && req.url === '/workers') return sendJSON(res, 200, await workers());
-  if (req.method === 'POST' && req.url === '/sync') {
-    // One sync at a time: concurrent fetches into one checkout fail on git's locks, and each caller
-    // must read the status its own sync wrote.
-    const result = syncing.then(async () => {
-      await promisify(execFile)('/bin/sh', ['/app/sync.sh']);
-      return workers();
-    });
-    syncing = result.catch(() => {});
-    return sendJSON(res, 200, await result);
-  }
   if (req.method === 'POST' && req.url === '/turns') {
     if (draining) return sendJSON(res, 503, { error: 'this project is stopping; try again once it is back' });
     return turn(req, res);
   }
   if (req.method === 'GET' && (req.url === '/files' || req.url?.startsWith('/files/') || req.url?.startsWith('/files?'))) return files(req, res);
-  const del = /^\/sessions\/([\w-]+)$/.exec(req.url ?? '');
-  if (req.method === 'DELETE' && del) {
-    await removeWorkdir(PROJECT_DIR, join(PROJECT_DIR, 'repo'), del[1]);
-    return sendJSON(res, 200, { ok: true });
-  }
   sendJSON(res, 404, { error: 'not found' });
 }
 
 async function files(req: IncomingMessage, res: ServerResponse) {
-  const found = await resolveRepoPath(join(PROJECT_DIR, 'repo'), (req.url ?? '').replace(/^\/files\/?/, ''));
+  const found = await resolveRepoPath(WORK_DIR, (req.url ?? '').replace(/^\/files\/?/, ''));
   if (!found) return sendJSON(res, 404, { error: 'not found' });
-  if (found.kind === 'dir') return sendJSON(res, 200, await listDir(join(PROJECT_DIR, 'repo'), found.path));
+  if (found.kind === 'dir') return sendJSON(res, 200, await listDir(WORK_DIR, found.path));
   res.writeHead(200, { 'content-type': found.type, 'content-length': found.size });
   // pipeline closes the file when the client goes away early; pipe() would leave it open.
   pipeline(openFile(found.path), res, () => {});
 }
 
-let syncing: Promise<unknown> = Promise.resolve();
-
-async function workers() {
-  const sync = JSON.parse(await readFile(join(PROJECT_DIR, '.bob', 'sync.json'), 'utf8').catch(() => '{"ok":false,"error":"never synced"}'));
-  // A bad bob.md must not hide the workers, and a bad worker must not hide bob.md: each is
-  // reported on its own, and whatever could be read is still returned.
-  const problems: string[] = [];
-  const project = await loadProject(CONFIG_DIR).catch((err) => {
-    problems.push(String((err as Error)?.message ?? err));
-    return NO_PROJECT;
-  });
-  const workers = await loadWorkers(join(CONFIG_DIR, 'workers')).catch((err) => {
-    problems.push(String((err as Error)?.message ?? err));
-    return [];
-  });
-  return { sync, project: { files_root: project.filesRoot }, workers, error: problems.join('; ') || undefined };
-}
-
 async function turn(req: IncomingMessage, res: ServerResponse) {
-  const body = JSON.parse(await readBody(req)) as { session_id?: string; worker?: string; text?: string; resume?: string; model?: string; effort?: string; user_email?: string; user_name?: string };
-  if (!body.session_id || !/^[\w-]+$/.test(body.session_id) || !body.worker || !body.text) {
-    return sendJSON(res, 400, { error: 'session_id, worker and text are required' });
+  let body: unknown;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    return sendJSON(res, 400, { error: 'the body must be JSON' });
   }
-  const worker = (await loadWorkers(join(CONFIG_DIR, 'workers'))).find((w) => w.name === body.worker);
-  if (!worker) return sendJSON(res, 404, { error: `no worker named ${body.worker}` });
-  // Read fresh every turn: a bob.md pushed and synced takes effect on the next message.
-  const project = await loadProject(CONFIG_DIR).catch(() => NO_PROJECT);
-  const driver = drivers[worker.engine];
-  if (!driver) return sendJSON(res, 501, { error: `engine ${worker.engine} is not supported yet` });
-
-  const cwd = await prepareWorkdir(PROJECT_DIR, join(PROJECT_DIR, 'repo'), body.session_id);
+  const parsed = parseTurn(body, Object.keys(drivers), WORK_DIR);
+  if ('error' in parsed) return sendJSON(res, 400, { error: parsed.error });
+  const { turn } = parsed;
+  const driver = drivers[turn.engine];
 
   const abort = new AbortController();
   res.on('close', () => { if (!res.writableFinished) abort.abort(); });
@@ -146,9 +105,7 @@ async function turn(req: IncomingMessage, res: ServerResponse) {
 
   inFlight++;
   try {
-    const result = await driver(worker, project, { sessionId: body.session_id, text: body.text, resume: body.resume, model: body.model, effort: body.effort, cwd,
-      userEmail: body.user_email, userName: body.user_name },
-      (event) => line({ engine: worker.engine, event }), abort.signal);
+    const result = await driver(turn, (event) => line({ engine: turn.engine, event }), abort.signal);
     line({ done: true, harness_session_id: result.harnessSessionId, error: result.error });
   } catch (err) {
     line({ done: true, error: String((err as Error)?.message ?? err) });

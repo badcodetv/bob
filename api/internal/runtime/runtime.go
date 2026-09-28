@@ -95,51 +95,6 @@ func (m *Manager) waitHealthy(ctx context.Context, project, base string) error {
 	}
 }
 
-type Worker struct {
-	Name   string   `json:"name"`
-	Engine string   `json:"engine"`
-	Model  string   `json:"model,omitempty"`
-	Effort string   `json:"effort,omitempty"`
-	Tools  []string `json:"tools,omitempty"`
-	Prompt string   `json:"prompt"`
-}
-
-// WorkerList is what the runtime reports about a project's config folder.
-type WorkerList struct {
-	// Project is bob.md's front matter: settings the project keeps in git, beside its workers.
-	Project struct {
-		FilesRoot string `json:"files_root"`
-	} `json:"project"`
-	Sync struct {
-		OK     bool   `json:"ok"`
-		Commit string `json:"commit,omitempty"`
-		Error  string `json:"error,omitempty"`
-	} `json:"sync"`
-	Workers []Worker `json:"workers"`
-	// Error is set when the folder was fetched but a worker file could not be read.
-	Error string `json:"error,omitempty"`
-}
-
-// Workers lists the project's workers; with sync, it pulls the git folder first.
-func Workers(ctx context.Context, base string, sync bool) (WorkerList, error) {
-	method, path := http.MethodGet, "/workers"
-	if sync {
-		method, path = http.MethodPost, "/sync"
-	}
-	req, _ := http.NewRequestWithContext(ctx, method, base+path, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return WorkerList{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return WorkerList{}, fmt.Errorf("runtime %s: %s: %s", path, resp.Status, bytes.TrimSpace(msg))
-	}
-	var out WorkerList
-	return out, json.NewDecoder(resp.Body).Decode(&out)
-}
-
 // TurnLine is one line of the runtime's NDJSON turn stream.
 type TurnLine struct {
 	Engine           string          `json:"engine,omitempty"`
@@ -149,35 +104,29 @@ type TurnLine struct {
 	Error            string          `json:"error,omitempty"`
 }
 
+// TurnRequest is POST /turns (runtime/src/turn.ts). It carries everything the turn runs with:
+// the runtime reads no config of its own.
 type TurnRequest struct {
 	SessionID string `json:"session_id"`
-	Worker    string `json:"worker"`
-	Text      string `json:"text"`
-	Resume    string `json:"resume,omitempty"`
-	Model     string `json:"model,omitempty"`
-	Effort    string `json:"effort,omitempty"`
+	Engine    string `json:"engine"`
+	// Model and Effort are what the turn runs with: the session's override, else the worker's.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// Tools is what the agent may use without asking (claude only); nil means the harness default.
+	Tools []string `json:"tools,omitempty"`
+	// SystemPrompt is appended to the harness's own; always sent, even when empty.
+	SystemPrompt string `json:"system_prompt"`
+	// MCPToken is the chat's bearer token for Bob's MCP server; empty until Bob serves one.
+	MCPToken string `json:"mcp_token"`
+	Text     string `json:"text"`
+	Resume   string `json:"resume,omitempty"`
 	// UserEmail and UserName are who the turn runs for: the signed-in person, or
 	// "schedule:<id>" and the schedule's name for a scheduled turn.
 	UserEmail string `json:"user_email"`
 	UserName  string `json:"user_name"`
 }
 
-// RemoveSession deletes a session's worktree and branch inside the project container.
-func RemoveSession(ctx context.Context, base, sessionID string) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/sessions/"+sessionID, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("runtime delete session: %s: %s", resp.Status, bytes.TrimSpace(msg))
-	}
-	return nil
-}
-
-// File fetches /files<escapedPath> from the runtime: a file from the synced checkout, or a
+// File fetches /files<escapedPath> from the runtime: a file from the project's work folder, or a
 // directory listing. The caller closes the body and passes the status on.
 func File(ctx context.Context, base, escapedPath string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/files"+escapedPath, nil)

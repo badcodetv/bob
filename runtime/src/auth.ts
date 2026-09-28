@@ -1,6 +1,10 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 
-/** Whether an Authorization header is basic auth with password token (any user name). */
+/**
+ * Whether an Authorization header is basic auth with password token (any user name). The token is
+ * this project's BOB_RUNTIME_TOKEN, compared exactly as given: Bob holds the same value as
+ * BOB_RUNTIME_TOKEN_<NAME> and sends it as the password.
+ */
 export function checkAuth(header: string | undefined, token: string): boolean {
   if (!token || !header?.startsWith('Basic ')) return false
   const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8')
@@ -9,12 +13,4 @@ export function checkAuth(header: string | undefined, token: string): boolean {
   // Compare digests, so the comparison takes the same time whatever the lengths.
   const digest = (s: string) => createHash('sha256').update(s).digest()
   return timingSafeEqual(digest(password), digest(token))
-}
-
-/**
- * This project's password: HMAC-SHA256 over "bob-runtime\0<project>" under BOB_RUNTIME_KEY.
- * Bob's api/internal/runtime.Token computes the same bytes; the two must not drift.
- */
-export function runtimeToken(key: string, project: string): string {
-  return createHmac('sha256', key).update(`bob-runtime\0${project}`).digest('hex');
 }

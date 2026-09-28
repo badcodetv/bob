@@ -46,13 +46,10 @@ func TestRouteAccess(t *testing.T) {
 		{tester, "GET", "/api/projects/enc", 404},
 		{tester, "GET", "/api/projects/missing", 404},
 		{admin, "GET", "/api/projects/enc", 200},
-		{tester, "POST", "/api/projects/wolf/sync", 200},
-		{tester, "POST", "/api/projects/enc/sync", 404},
-		{tester, "GET", "/api/projects/wolf/workers", 200},
-		{tester, "GET", "/api/projects/enc/workers", 404},
 		{tester, "GET", "/api/projects/wolf/sessions", 200},
 		{tester, "POST", "/api/projects/wolf/sessions", 200},
 		{tester, "POST", "/api/projects/enc/sessions", 404},
+		{tester, "POST", "/api/projects/wolf/sync", 404}, // gone: workers are not in git any more
 
 		{tester, "GET", "/api/sessions/wolf-chat", 200},
 		{tester, "GET", "/api/sessions/enc-chat", 404},

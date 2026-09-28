@@ -1,6 +1,6 @@
-// Read-only access to the project's synced checkout (/project/repo) for Bob's file viewer.
-// Anything that would leave the checkout — "..", encoded or not, a symlink pointing out, or the
-// .git folder — is reported as not found.
+// Read-only access to the project's work folder (/project/work) for Bob's file viewer. Chats clone
+// repositories inside it. Anything that would leave the folder — "..", encoded or not, a symlink
+// pointing out, or any .git folder — is reported as not found.
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, sep } from 'node:path'
@@ -41,7 +41,7 @@ export async function resolveRepoPath(repoDir: string, urlPath: string): Promise
 
 /**
  * Lists dir (inside repoDir). A symlink is listed as what it points to when that stays inside the
- * checkout, and left out when it does not, since it could not be opened anyway.
+ * folder, and left out when it does not, since it could not be opened anyway.
  */
 export async function listDir(repoDir: string, dir: string) {
   const entries = []

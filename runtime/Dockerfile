@@ -13,8 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY package.json entrypoint.sh sync.sh ./
-COPY bob-push /usr/local/bin/bob-push
+COPY package.json entrypoint.sh ./
 # Git reaches github.com with GITHUB_TOKEN from the environment, read at the moment git asks.
 # The token is never written to a file — not here, not on the project volume.
 RUN git config --system credential.https://github.com.helper \

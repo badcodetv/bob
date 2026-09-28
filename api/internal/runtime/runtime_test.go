@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,27 @@ func TestTokenVar(t *testing.T) {
 	} {
 		if got := TokenVar(name); got != want {
 			t.Errorf("TokenVar(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// The runtime refuses a turn with no system_prompt, so it is sent even when empty; so is
+// mcp_token, which the runtime's TurnRequest names as always present.
+func TestTurnRequestAlwaysSendsThePrompt(t *testing.T) {
+	b, err := json.Marshal(TurnRequest{SessionID: "s", Engine: "claude", Text: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sent map[string]any
+	json.Unmarshal(b, &sent)
+	for _, key := range []string{"session_id", "engine", "system_prompt", "mcp_token", "text"} {
+		if _, ok := sent[key]; !ok {
+			t.Errorf("%s is missing from %s", key, b)
+		}
+	}
+	for _, key := range []string{"tools", "model", "effort", "resume"} {
+		if _, ok := sent[key]; ok {
+			t.Errorf("%s should be left out when empty: %s", key, b)
 		}
 	}
 }

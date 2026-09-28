@@ -517,7 +517,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `testDatabases` map filled by `testStore` (the store keeps its pool private). `go mod tidy` dropped
   `gopkg.in/yaml.v3`. See Discovered Issues Log for interim gaps until T2–T5.
 
-### T2: Runtime becomes stateless about config   [Status: pending | Model: opus]
+### T2: Runtime becomes stateless about config   [Status: done | Model: opus]
 - **Scope:** `server.ts`: read `BOB_RUNTIME_TOKEN` and `BOB_API_URL` (exit with a message if either
   is missing), delete the token from `process.env`, compare the basic-auth password directly (drop
   `runtimeToken` from `auth.ts`); delete `/workers`, `/sync`, `DELETE /sessions/<id>`; `/files`
@@ -543,8 +543,24 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `cd runtime && rm -rf dist && npm run build && npm test` → pass; `./stack test` →
   "all green"; `docker build -t bob-runtime:dev runtime` → succeeds.
 - **Depends on:** T1
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) Tests added: runtime `turn.test.ts` "a turn carries everything it runs with…" and
+  "a turn Bob could not have meant is refused…" (for the new `parseTurn(body, engines, cwd)` in
+  `turn.ts`, which `server.ts` uses), `auth.test.ts` "the password is BOB_RUNTIME_TOKEN itself…";
+  Go `TestReadingAWorker` (store), `TestTurnRequestAlwaysSendsThePrompt` (runtime),
+  `TestTurnCarriesTheWorkersSettings`, `TestTurnOnADeletedWorkerFails`,
+  `TestCreateSessionFindsTheWorkerInTheDatabase` (cmd/bob, new `http_test.go`); access test now
+  expects `POST …/sync` → 404. `schedules_test.go`'s fake runtime records turns and any other
+  request as unexpected (asserted empty); sync/missing-worker/worktree cases dropped;
+  `TestScheduleNoOverlapAndPostRunSync` → `TestScheduleNoOverlap`. The API side of the turn is
+  `app.turnRequest` (`http.go`): engine from the session, model/effort = session override else the
+  worker's, tools and `system_prompt` = the worker's; a session whose worker is gone fails with
+  "worker … has been deleted" before calling the runtime; a plain chat sends an empty prompt.
+  `system_prompt` and `mcp_token` have no `omitempty` (the runtime refuses a turn without the prompt;
+  an empty one is accepted). Also: `GET /api/projects/{p}/workers` and `POST …/sync` routes deleted
+  (T5 re-adds the first from the store); `yaml` dropped from `runtime/package.json`; the runtime
+  requires `BOB_RUNTIME_TOKEN` and `BOB_API_URL` only (`BOB_PROJECT_NAME` is no longer read). See
+  the Discovered Issues Log for `store.Worker` (by name) and interim gaps.
 
 ### T3: Compose files and secrets in this repo; `./stack` uses them   [Status: pending | Model: sonnet]
 - **Scope:**
@@ -1157,3 +1173,18 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **T1:** an existing `bob` database (laptop or box) will not boot this API until its schema is
   reset: `001_baseline.sql` is a new migration name there, and its `CREATE TABLE projects` fails on
   the old table. Expected (the reset is planned); not done by the executor (needs Kai's go-ahead).
+- **T2 (small scope addition):** `createSession` found workers through the runtime's `/workers`,
+  which T2 deletes, so it now reads them from the database with `store.Worker(ctx, project, name)`
+  — T4's exact signature, added beside `WorkerByID` in the minimal `store/workers.go`. Sessions
+  created this way get their `worker_id` (fixing T1's interim `worker_removed: true`). T4 keeps
+  both and adds the rest.
+- **T2 (interim, fixed by later tickets):** the web still calls `GET /api/projects/{p}/workers`
+  and `POST …/sync` (`web/src/api.ts:49-50`), now 404 — no workers list or Sync button works until
+  T5 (route) / T6 (web). `README.md:93-95,210-211` still describe `bob-push` and those routes (T26).
+- **T2 (interim):** `scripts/compose-projects.mjs` still gives project containers
+  `BOB_RUNTIME_KEY` and `BOB_REPO_*`, not `BOB_RUNTIME_TOKEN` / `BOB_API_URL`, so a container from
+  the new `bob-runtime` image exits at boot ("BOB_RUNTIME_TOKEN and BOB_API_URL are required") until
+  T3's `deploy/compose.dev.yml` replaces it.
+- **T2:** the executor inspected the built image with one `docker run --rm --entrypoint sh
+  bob-runtime:dev -c 'ls …'` (a throwaway container, removed on exit) to confirm `sync.sh` and
+  `bob-push` are gone and the git credential helper is kept.

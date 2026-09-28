@@ -81,7 +81,7 @@ func (a *app) viewFile(w http.ResponseWriter, r *http.Request) {
 	a.serveFile(w, r, project, strings.TrimPrefix(r.URL.EscapedPath(), "/api/view/"+token))
 }
 
-// serveFile proxies a file request to the project's runtime, which serves the synced checkout.
+// serveFile proxies a file request to the project's runtime, which serves its work folder.
 // The path is passed on still escaped; the runtime does the containment checks, and anything
 // with a ".." or .git segment is refused here too.
 func (a *app) serveFile(w http.ResponseWriter, r *http.Request, project, rest string) {
