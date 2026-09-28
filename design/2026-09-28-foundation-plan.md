@@ -19,6 +19,19 @@
 >   or containers, deploys, anything needing a human sign-in. Prepare the exact command, then ask.
 
 Status: approved (Kai, 2026-09-28)
+
+**Run decisions (Kai, 2026-09-28, for the unattended run; these override the "ask Kai" rule above):**
+- **Pre-authorised:** every destructive and production step exactly as the tickets describe it —
+  T16's box cutover (stop old Bob, delete `bob-project-wolf` container and volume, reset the `bob`
+  schema, deploy), T25's `CREATE EXTENSION vector` and deploy, T26's local wipe. Still stop for what
+  only Kai can do (logins, device codes, creating tokens or OAuth apps, writing emails he has not
+  given) and for anything the plan does not cover.
+- **Git:** commit each verified ticket onto `main` and push it to `origin main` (`badcodetv/bob`, public).
+- **ENC's repository is `emperorsnewcoin/bob`** (https://github.com/emperorsnewcoin/bob): the
+  librarian clones it into `/project/work`, and `GITHUB_TOKEN_ENC` is scoped to it.
+- **Wolf's attention webhook: none for now.** `BOB_ATTENTION_WEBHOOK_WOLF` stays empty; T25's live
+  check skips the webhook part (the badge is still checked).
+- **Bob's API port is 8070** everywhere (Discovered Issues Log, T3).
 Relates: `design/2026-09-28-foundation-and-use-cases.md` (Kai's decisions — the source of this plan;
 where this plan and DESIGN.md disagree, this plan wins), `design/2026-09-21-projects-in-compose.md`
 (superseded in part: `projects.yaml`, the compose generator, `BOB_RUNTIME_KEY` and the ops-owned
@@ -1076,8 +1089,8 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   2. **Production secrets move here** (ask Kai): `cp ../ops/secrets/bob/.env .env.box`; remove
      `BOB_RUNTIME_KEY`, `BOB_PROJECTS_FILE`, `FRED_API_KEY` (wolf's comes back in T25); add
      `BOB_PUBLIC_URL=https://bob.box.badcode.tv`,
-     `BOB_RUNTIME_TOKEN_ENC` (`openssl rand -hex 32`), `GITHUB_TOKEN_ENC` (fine-grained, ENC repos
-     only — Kai creates it), `BOB_DRIVE_CLIENT_ID`, `BOB_DRIVE_CLIENT_SECRET`,
+     `BOB_RUNTIME_TOKEN_ENC` (`openssl rand -hex 32`), `GITHUB_TOKEN_ENC` (fine-grained, `emperorsnewcoin/bob` only, contents read/write —
+     Kai creates it), `BOB_DRIVE_CLIENT_ID`, `BOB_DRIVE_CLIENT_SECRET`,
      `BOB_DRIVE_TOKEN_ENC` (from `scripts/drive-token` run against the ENC Drive account). Add
      Richard as a member of `enc` in `BOB_PROJECT_MAP`. Mind the quoting difference documented in
      `ops/secrets/README.md` ("The quoting trap"): `.env.box` is read by `docker compose
@@ -1100,8 +1113,8 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Files:** `stack`, `deploy/compose.yml`, `deploy/env.example`, `.env.box` (not committed),
   `README.md`; ops: `README.md`, `secrets/README.md`, deletions.
 - **Acceptance criteria:** ENC live check — Kai opens `enc`, starts a **Codex plain chat**, asks it
-  to create a worker `librarian`; a librarian chat lists a Drive folder, reads one Doc, clones the
-  ENC repository into `/project/work`, writes the Doc as markdown into it, commits and pushes.
+  to create a worker `librarian`; a librarian chat lists a Drive folder, reads one Doc, clones
+  `emperorsnewcoin/bob` into `/project/work`, writes the Doc as markdown into it, commits and pushes.
 - **TDD:** no.
 - **Validation:** `bash -n stack` → ok; `./stack deploy` with no tag → refuses with usage;
   `ssh ubuntu@box.badcode.tv 'curl -sf http://127.0.0.1:8100/healthz'` → `ok`;
