@@ -139,7 +139,7 @@ func (a *app) execute(ctx context.Context, sch store.Schedule, run store.Run) {
 		}
 		return
 	}
-	sess, err := a.store.CreateSession(ctx, sch.Project, worker.Name, worker.Engine, "", "")
+	sess, err := a.store.CreateSession(ctx, sch.Project, &sch.WorkerID, worker.Name, worker.Engine, "", "")
 	if err == nil {
 		err = a.store.StartScheduledSession(ctx, run.ID, sch.ID, sess.ID)
 	}
@@ -211,9 +211,10 @@ func (a *app) listSchedules(w http.ResponseWriter, r *http.Request) {
 }
 
 // scheduleBody is a schedule as the API accepts it; absent fields keep their value on PATCH.
+// The worker is named by its id until workers have routes of their own to look one up by name.
 type scheduleBody struct {
 	Name         *string `json:"name"`
-	Worker       *string `json:"worker"`
+	WorkerID     *string `json:"worker_id"`
 	Cron         *string `json:"cron"`
 	Timezone     *string `json:"timezone"`
 	Message      *string `json:"message"`
@@ -228,7 +229,7 @@ func (b scheduleBody) apply(x *store.Schedule) {
 		}
 	}
 	set(&x.Name, b.Name)
-	set(&x.Worker, b.Worker)
+	set(&x.WorkerID, b.WorkerID)
 	set(&x.Cron, b.Cron)
 	set(&x.Timezone, b.Timezone)
 	if b.Message != nil {
@@ -248,8 +249,8 @@ func validSchedule(x store.Schedule) error {
 	switch {
 	case !scheduleName.MatchString(x.Name):
 		return errors.New("name: lower-case letters, digits and -, starting with a letter or digit")
-	case x.Worker == "":
-		return errors.New("worker is required")
+	case x.WorkerID == "":
+		return errors.New("worker_id is required")
 	case strings.TrimSpace(x.Message) == "":
 		return errors.New("message is required")
 	case x.KeepSessions < 1:

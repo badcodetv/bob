@@ -54,12 +54,36 @@ func testStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testDatabases[st] = u.String()
 	t.Cleanup(func() {
+		delete(testDatabases, st)
 		st.Close()
 		admin.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
 		admin.Close(context.Background())
 	})
 	return st
+}
+
+// testDatabases is each test store's connection string, for insertWorker's raw SQL: the store
+// keeps its pool to itself.
+var testDatabases = map[*store.Store]string{}
+
+// insertWorker adds a worker with raw SQL and returns its id. Bob has no worker routes or store
+// functions yet; sessions and schedules only need the row to point at. The same helper is in
+// api/internal/store/store_test.go (test helpers cannot cross packages).
+func insertWorker(t *testing.T, st *store.Store, project, name, engine string) (id string) {
+	t.Helper()
+	db, err := pgx.Connect(t.Context(), testDatabases[st])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	err = db.QueryRow(t.Context(), `INSERT INTO workers (project, name, engine, created_by, updated_by)
+		VALUES ($1, $2, $3, 'test', 'test') RETURNING id`, project, name, engine).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // fakeRuntime is a project container's runtime server: it counts git syncs, can fail them, and
@@ -135,6 +159,9 @@ type clock struct {
 func (c *clock) now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
 func (c *clock) set(t time.Time) { c.mu.Lock(); c.t = t; c.mu.Unlock() }
 
+// newScheduleApp serves project wolf, whose worker "researcher" is both in the database (what a
+// schedule points at) and in the fake runtime's git folder (what a run still reads, until workers
+// come from the database alone). researcherID is the database row's id.
 func newScheduleApp(t *testing.T) (*app, *fakeRuntime, *clock) {
 	st := testStore(t)
 	rt := &fakeRuntime{workers: []string{"researcher"}}
@@ -142,11 +169,15 @@ func newScheduleApp(t *testing.T) (*app, *fakeRuntime, *clock) {
 	t.Cleanup(srv.Close)
 	c := &clock{t: time.Now()}
 	a := &app{store: st, broker: broker.New(), runtime: fakeContainers{srv.URL}, now: c.now, turns: map[string]context.CancelFunc{}}
-	if err := st.ReconcileProjects(t.Context(), []store.Project{{Name: "wolf", RepoURL: "https://example.invalid/wolf"}}); err != nil {
+	if err := st.ReconcileProjects(t.Context(), []string{"wolf"}); err != nil {
 		t.Fatal(err)
 	}
+	researcherID[a] = insertWorker(t, st, "wolf", "researcher", "claude")
 	return a, rt, c
 }
+
+// researcherID is the id of each schedule app's "researcher" worker.
+var researcherID = map[*app]string{}
 
 func runs(t *testing.T, a *app, sch store.Schedule) []store.Run {
 	rs, err := a.store.Runs(t.Context(), sch.ID, 100)
@@ -168,7 +199,7 @@ func statuses(rs []store.Run) string {
 }
 
 func create(t *testing.T, a *app, x store.Schedule) store.Schedule {
-	x.Project, x.Worker, x.Message, x.Enabled = "wolf", "researcher", "do the research", true
+	x.Project, x.WorkerID, x.Message, x.Enabled = "wolf", researcherID[a], "do the research", true
 	if x.Timezone == "" {
 		x.Timezone = "UTC"
 	}
@@ -332,7 +363,8 @@ func TestScheduledSessionsAreNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.scheduled.Wait()
-	a.store.CreateSession(t.Context(), "wolf", "researcher", "claude", "", "")
+	id := researcherID[a]
+	a.store.CreateSession(t.Context(), "wolf", &id, "researcher", "claude", "", "")
 	list, err := a.store.Sessions(t.Context(), "wolf")
 	if err != nil || len(list) != 2 {
 		t.Fatalf("sessions: %v %v", list, err)

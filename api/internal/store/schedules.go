@@ -9,11 +9,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Schedule starts a new session on Worker with Message whenever Cron fires in Timezone.
+// Schedule starts a new session on the worker WorkerID with Message whenever Cron fires in Timezone.
 type Schedule struct {
 	ID       string `json:"id"`
 	Project  string `json:"project"`
 	Name     string `json:"name"`
+	WorkerID string `json:"worker_id"`
+	// Worker is the worker's name, read from the worker; saving a schedule ignores it.
 	Worker   string `json:"worker"`
 	Cron     string `json:"cron"`
 	Timezone string `json:"timezone"`
@@ -26,11 +28,17 @@ type Schedule struct {
 	ChangedAt time.Time `json:"changed_at"`
 }
 
-const scheduleCols = `id, project, name, worker, cron, timezone, message, enabled, keep_sessions, created_at, changed_at`
+// scheduleCols are read from schedules s joined to their worker w, for the worker's name:
+// scheduleFrom for reads, and writtenBack for writes, as `WITH s AS (… RETURNING *) SELECT …`.
+const (
+	scheduleCols = `s.id, s.project, s.name, s.worker_id, w.name, s.cron, s.timezone, s.message, s.enabled, s.keep_sessions, s.created_at, s.changed_at`
+	scheduleFrom = ` FROM schedules s JOIN workers w ON w.id = s.worker_id`
+	writtenBack  = ` FROM s JOIN workers w ON w.id = s.worker_id`
+)
 
 func scanSchedule(row pgx.Row) (Schedule, error) {
 	var x Schedule
-	err := row.Scan(&x.ID, &x.Project, &x.Name, &x.Worker, &x.Cron, &x.Timezone, &x.Message, &x.Enabled, &x.KeepSessions, &x.CreatedAt, &x.ChangedAt)
+	err := row.Scan(&x.ID, &x.Project, &x.Name, &x.WorkerID, &x.Worker, &x.Cron, &x.Timezone, &x.Message, &x.Enabled, &x.KeepSessions, &x.CreatedAt, &x.ChangedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -38,16 +46,16 @@ func scanSchedule(row pgx.Row) (Schedule, error) {
 }
 
 func (s *Store) CreateSchedule(ctx context.Context, x Schedule) (Schedule, error) {
-	return scanSchedule(s.db.QueryRow(ctx, `INSERT INTO schedules (project, name, worker, cron, timezone, message, enabled, keep_sessions)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+scheduleCols,
-		x.Project, x.Name, x.Worker, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions))
+	return scanSchedule(s.db.QueryRow(ctx, `WITH s AS (INSERT INTO schedules (project, name, worker_id, cron, timezone, message, enabled, keep_sessions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *) SELECT `+scheduleCols+writtenBack,
+		x.Project, x.Name, x.WorkerID, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions))
 }
 
 // UpdateSchedule saves every field but the id, project and creation time.
 func (s *Store) UpdateSchedule(ctx context.Context, x Schedule) (Schedule, error) {
-	return scanSchedule(s.db.QueryRow(ctx, `UPDATE schedules SET name = $2, worker = $3, cron = $4, timezone = $5, message = $6,
-		enabled = $7, keep_sessions = $8, changed_at = $9 WHERE id = $1 RETURNING `+scheduleCols,
-		x.ID, x.Name, x.Worker, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions, x.ChangedAt))
+	return scanSchedule(s.db.QueryRow(ctx, `WITH s AS (UPDATE schedules SET name = $2, worker_id = $3, cron = $4, timezone = $5, message = $6,
+		enabled = $7, keep_sessions = $8, changed_at = $9 WHERE id = $1 RETURNING *) SELECT `+scheduleCols+writtenBack,
+		x.ID, x.Name, x.WorkerID, x.Cron, x.Timezone, x.Message, x.Enabled, x.KeepSessions, x.ChangedAt))
 }
 
 func (s *Store) DeleteSchedule(ctx context.Context, id string) error {
@@ -62,17 +70,17 @@ func (s *Store) Schedule(ctx context.Context, id string) (Schedule, error) {
 	if !isUUID(id) {
 		return Schedule{}, ErrNotFound
 	}
-	return scanSchedule(s.db.QueryRow(ctx, `SELECT `+scheduleCols+` FROM schedules WHERE id = $1`, id))
+	return scanSchedule(s.db.QueryRow(ctx, `SELECT `+scheduleCols+scheduleFrom+` WHERE s.id = $1`, id))
 }
 
 // Schedules lists a project's schedules by name; with project "", every enabled schedule.
 func (s *Store) Schedules(ctx context.Context, project string) ([]Schedule, error) {
-	// present keeps the schedules of a project the projects file no longer lists out of every
-	// answer: they must not fire, and they are not the caller's business either.
-	const present = ` AND EXISTS (SELECT 1 FROM projects p WHERE p.name = schedules.project AND p.absent_at IS NULL)`
-	q, args := `SELECT `+scheduleCols+` FROM schedules WHERE project = $1`+present+` ORDER BY name`, []any{project}
+	// present keeps the schedules of a project BOB_PROJECTS no longer lists out of every answer:
+	// they must not fire, and they are not the caller's business either.
+	const present = ` AND EXISTS (SELECT 1 FROM projects p WHERE p.name = s.project AND p.absent_at IS NULL)`
+	q, args := `SELECT `+scheduleCols+scheduleFrom+` WHERE s.project = $1`+present+` ORDER BY s.name`, []any{project}
 	if project == "" {
-		q, args = `SELECT `+scheduleCols+` FROM schedules WHERE enabled`+present+` ORDER BY project, name`, nil
+		q, args = `SELECT `+scheduleCols+scheduleFrom+` WHERE s.enabled`+present+` ORDER BY s.project, s.name`, nil
 	}
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {

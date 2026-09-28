@@ -35,6 +35,7 @@ type app struct {
 	// projectOf resolves the project a scoped route's session or schedule belongs to ("" if none).
 	projectOf func(ctx context.Context, kind, id string) string
 	webDir    string
+	publicURL string // BOB_PUBLIC_URL: where people reach Bob, for links to chats
 	store     *store.Store
 	broker    *broker.Broker
 	runtime   containers
@@ -302,7 +303,8 @@ func (a *app) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, wk := range list.Workers {
 		if wk.Name == body.Worker {
-			s, err := a.store.CreateSession(r.Context(), project, wk.Name, wk.Engine, body.Model, body.Effort)
+			// Workers still come from git here, so the session has no worker row to point at.
+			s, err := a.store.CreateSession(r.Context(), project, nil, wk.Name, wk.Engine, body.Model, body.Effort)
 			reply(w, s, err)
 			return
 		}

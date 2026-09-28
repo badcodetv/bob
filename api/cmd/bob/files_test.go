@@ -12,7 +12,6 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
-	"github.com/badcodetv/bob/internal/store"
 )
 
 func TestOrigin(t *testing.T) {
@@ -51,7 +50,7 @@ func TestSafeFilePath(t *testing.T) {
 // headers on every kind of response, and refuses escapes before reaching the runtime.
 func TestFileViewerHeaders(t *testing.T) {
 	st := testStore(t)
-	if err := st.ReconcileProjects(t.Context(), []store.Project{{Name: "wolf", RepoURL: "https://example.invalid/wolf"}}); err != nil {
+	if err := st.ReconcileProjects(t.Context(), []string{"wolf"}); err != nil {
 		t.Fatal(err)
 	}
 	var asked []string

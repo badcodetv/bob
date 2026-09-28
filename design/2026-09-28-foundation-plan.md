@@ -483,7 +483,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 
 ### Part 1 — ENC
 
-### T1: Fresh schema baseline; projects from `BOB_PROJECTS`   [Status: pending | Model: opus]
+### T1: Fresh schema baseline; projects from `BOB_PROJECTS`   [Status: done | Model: opus]
 - **Scope:** Replace migrations `001`–`008` with `001_baseline.sql` (Interfaces → Database). Change
   `store.Project`, `Session`, `CreateSession`, `Schedule` and `ReconcileProjects` as in Interfaces →
   Go store (T1). Delete `api/internal/projects/`. `main.go` reads `BOB_PROJECTS`, validates names
@@ -507,8 +507,15 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `./stack test` → "all green"; `cd api && go vet ./...` → clean;
   `grep -rn "BOB_RUNTIME_KEY\|internal/projects" api/` → no matches.
 - **Depends on:** —
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) Tests added: store `TestFreshDatabaseIsTheBaseline`, `TestReconcileProjectsByNames`,
+  `TestDeletingAWorkerCascades` (both cascades + versions outlive the worker); runtime `TestTokenVar`
+  (name → variable; lives in `runtime`, as `runtime.TokenVar`, so `Ensure`'s error and `main` share it),
+  `TestEnsureNeedsTheProjectsToken`; main `TestProjectsFromEnv`, `TestPublicURL`. `runtime.Token`'s test
+  deleted with it. `Session.WorkerRemoved` is filled by `store.Sessions` already (T5 need only
+  pass it through). `cmd/bob`'s `insertWorker` reaches the throwaway database through a
+  `testDatabases` map filled by `testStore` (the store keeps its pool private). `go mod tidy` dropped
+  `gopkg.in/yaml.v3`. See Discovered Issues Log for interim gaps until T2–T5.
 
 ### T2: Runtime becomes stateless about config   [Status: pending | Model: opus]
 - **Scope:** `server.ts`: read `BOB_RUNTIME_TOKEN` and `BOB_API_URL` (exit with a message if either
@@ -1134,3 +1141,19 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 
 ## Discovered Issues Log
 (appended by executors during implementation)
+
+- **T1 (interim, fixed by later tickets):** `./stack start` no longer boots the API until T3 — it
+  still sets `BOB_PROJECTS_FILE` and not `BOB_PROJECTS` / `BOB_RUNTIME_TOKEN_<NAME>` /
+  `BOB_PUBLIC_URL`. `./stack test` is unaffected.
+- **T1 (interim):** schedule create/update over HTTP take `worker_id` (not a name) until T5 resolves
+  names; `web/src/Schedules.tsx` still sends `worker`, so creating a schedule from the UI returns
+  400 "worker_id is required" until T5. There are no worker rows before T5 anyway.
+- **T1 (interim):** `createSession` (`http.go`) still finds workers in git, so it passes a nil
+  `worker_id`; such chats read as `worker_removed: true` on the session list until T5 looks workers
+  up in the database. The web does not read `worker_removed` until T7.
+- **T1:** the baseline follows the plan's `sessions.project REFERENCES projects(name)` (no
+  `ON DELETE CASCADE`, which 001_init.sql had); `schedules.project` keeps its cascade as in
+  003_schedules.sql. Projects are never deleted (only marked absent), so neither matters today.
+- **T1:** an existing `bob` database (laptop or box) will not boot this API until its schema is
+  reset: `001_baseline.sql` is a new migration name there, and its `CREATE TABLE projects` fails on
+  the old table. Expected (the reset is planned); not done by the executor (needs Kai's go-ahead).

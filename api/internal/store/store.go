@@ -68,35 +68,27 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
+// Project is one project Bob serves. Which projects exist is deployment configuration
+// (BOB_PROJECTS); the prompt is edited in Bob.
 type Project struct {
 	Name      string    `json:"name"`
-	RepoURL   string    `json:"repo_url"`
-	RepoRef   string    `json:"repo_ref"`
-	Subfolder string    `json:"subfolder"`
-	Image     string    `json:"image"`
-	RepoMount string    `json:"repo_mount,omitempty"`
+	Prompt    string    `json:"prompt"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ReconcileProjects brings the table in step with the list read from the projects file: every
-// listed project is inserted or updated and marked present, and any other is marked absent.
+// ReconcileProjects brings the table in step with BOB_PROJECTS: every listed project is inserted
+// if new and marked present, and any other is marked absent. Nothing else of a project changes
+// here — its prompt is edited in Bob, not in the deploy.
 //
 // A project is never deleted here. Its sessions and schedules point at this row, and they are the
 // record of work that happened; an absent project simply stops being served. Re-listing its name
 // brings it back, with its history, which is why names must never be reused for something else.
-func (s *Store) ReconcileProjects(ctx context.Context, list []Project) error {
+func (s *Store) ReconcileProjects(ctx context.Context, names []string) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		names := make([]string, 0, len(list))
-		for _, p := range list {
-			if p.RepoRef == "" {
-				p.RepoRef = "main"
-			}
-			names = append(names, p.Name)
-			if _, err := tx.Exec(ctx, `INSERT INTO projects (name, repo_url, repo_ref, subfolder, image, repo_mount, absent_at)
-				VALUES ($1, $2, $3, $4, $5, $6, NULL)
-				ON CONFLICT (name) DO UPDATE SET repo_url = $2, repo_ref = $3, subfolder = $4, image = $5, repo_mount = $6, absent_at = NULL`,
-				p.Name, p.RepoURL, p.RepoRef, p.Subfolder, p.Image, p.RepoMount); err != nil {
-				return fmt.Errorf("project %s: %w", p.Name, err)
+		for _, name := range names {
+			if _, err := tx.Exec(ctx, `INSERT INTO projects (name) VALUES ($1)
+				ON CONFLICT (name) DO UPDATE SET absent_at = NULL`, name); err != nil {
+				return fmt.Errorf("project %s: %w", name, err)
 			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE projects SET absent_at = now() WHERE absent_at IS NULL AND name <> ALL($1)`, names)
@@ -104,7 +96,7 @@ func (s *Store) ReconcileProjects(ctx context.Context, list []Project) error {
 	})
 }
 
-// AbsentProjects names the projects in the table that the projects file no longer lists.
+// AbsentProjects names the projects in the table that BOB_PROJECTS no longer lists.
 func (s *Store) AbsentProjects(ctx context.Context) ([]string, error) {
 	rows, err := s.db.Query(ctx, `SELECT name FROM projects WHERE absent_at IS NOT NULL ORDER BY name`)
 	if err != nil {
@@ -113,18 +105,18 @@ func (s *Store) AbsentProjects(ctx context.Context) ([]string, error) {
 	return collect(rows, func(row pgx.Row) (string, error) { var n string; return n, row.Scan(&n) })
 }
 
-const projectCols = `name, repo_url, repo_ref, subfolder, image, repo_mount, created_at`
+const projectCols = `name, prompt, created_at`
 
 func scanProject(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.Name, &p.RepoURL, &p.RepoRef, &p.Subfolder, &p.Image, &p.RepoMount, &p.CreatedAt)
+	err := row.Scan(&p.Name, &p.Prompt, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, ErrNotFound
 	}
 	return p, err
 }
 
-// Project reads one project Bob serves. A project the file no longer lists is not found, so its
+// Project reads one project Bob serves. A project BOB_PROJECTS no longer lists is not found, so its
 // routes 404 exactly as an unknown name does.
 func (s *Store) Project(ctx context.Context, name string) (Project, error) {
 	return scanProject(s.db.QueryRow(ctx, `SELECT `+projectCols+` FROM projects WHERE name = $1 AND absent_at IS NULL`, name))
@@ -139,11 +131,14 @@ func (s *Store) Projects(ctx context.Context) ([]Project, error) {
 }
 
 type Session struct {
-	ID               string `json:"id"`
-	Project          string `json:"project"`
-	Worker           string `json:"worker"`
-	Engine           string `json:"engine"`
-	HarnessSessionID string `json:"harness_session_id"`
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	// WorkerID is the worker the session runs, nil for a plain chat or once that worker is
+	// deleted. Worker is its name when the session was created ("" for a plain chat), kept after.
+	WorkerID         *string `json:"worker_id"`
+	Worker           string  `json:"worker"`
+	Engine           string  `json:"engine"`
+	HarnessSessionID string  `json:"harness_session_id"`
 	// Model and Effort override the worker's settings; empty means the worker's.
 	Model     string    `json:"model"`
 	Effort    string    `json:"effort"`
@@ -155,22 +150,27 @@ type Session struct {
 	LastActiveAt *time.Time `json:"last_active_at,omitempty"`
 	// Schedule is the name of the schedule that started this chat, if one did (list only).
 	Schedule string `json:"schedule,omitempty"`
+	// WorkerRemoved is set when the session's worker has been deleted (list only): the chat stays
+	// readable, but takes no more messages.
+	WorkerRemoved bool `json:"worker_removed,omitempty"`
 }
 
-const sessionCols = `id, project, worker, engine, harness_session_id, model, effort, created_at`
+const sessionCols = `id, project, worker_id, worker, engine, harness_session_id, model, effort, created_at`
 
 func scanSession(row pgx.Row) (Session, error) {
 	var x Session
-	err := row.Scan(&x.ID, &x.Project, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt)
+	err := row.Scan(&x.ID, &x.Project, &x.WorkerID, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return x, ErrNotFound
 	}
 	return x, err
 }
 
-func (s *Store) CreateSession(ctx context.Context, project, worker, engine, model, effort string) (Session, error) {
-	return scanSession(s.db.QueryRow(ctx, `INSERT INTO sessions (project, worker, engine, model, effort) VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+sessionCols, project, worker, engine, model, effort))
+// CreateSession starts a session on the worker workerID, named worker; a plain chat has a nil
+// workerID and worker "".
+func (s *Store) CreateSession(ctx context.Context, project string, workerID *string, worker, engine, model, effort string) (Session, error) {
+	return scanSession(s.db.QueryRow(ctx, `INSERT INTO sessions (project, worker_id, worker, engine, model, effort) VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+sessionCols, project, workerID, worker, engine, model, effort))
 }
 
 // SetSessionSettings changes a session's model and effort for its next turn.
@@ -193,13 +193,14 @@ func (s *Store) Session(ctx context.Context, id string) (Session, error) {
 }
 
 // Sessions lists a project's sessions, most recently active first, each with its title (the
-// first user message), message count and last activity.
+// first user message), message count, last activity, and whether its worker has been deleted.
 func (s *Store) Sessions(ctx context.Context, project string) ([]Session, error) {
-	rows, err := s.db.Query(ctx, `SELECT s.id, s.project, s.worker, s.engine, s.harness_session_id, s.model, s.effort, s.created_at,
+	rows, err := s.db.Query(ctx, `SELECT s.id, s.project, s.worker_id, s.worker, s.engine, s.harness_session_id, s.model, s.effort, s.created_at,
 			COALESCE((SELECT e.payload->>'text' FROM events e WHERE e.session_id = s.id AND e.kind = 'bob.user_message' ORDER BY e.id LIMIT 1), ''),
 			(SELECT count(*) FROM events e WHERE e.session_id = s.id AND e.kind = 'bob.user_message'),
 			COALESCE((SELECT max(e.created_at) FROM events e WHERE e.session_id = s.id), s.created_at) AS last_active,
-			COALESCE((SELECT sc.name FROM schedules sc WHERE sc.id = s.schedule_id), '')
+			COALESCE((SELECT sc.name FROM schedules sc WHERE sc.id = s.schedule_id), ''),
+			s.worker <> '' AND s.worker_id IS NULL
 		FROM sessions s WHERE s.project = $1 ORDER BY last_active DESC`, project)
 	if err != nil {
 		return nil, err
@@ -207,8 +208,8 @@ func (s *Store) Sessions(ctx context.Context, project string) ([]Session, error)
 	return collect(rows, func(row pgx.Row) (Session, error) {
 		var x Session
 		var last time.Time
-		err := row.Scan(&x.ID, &x.Project, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt,
-			&x.Title, &x.Messages, &last, &x.Schedule)
+		err := row.Scan(&x.ID, &x.Project, &x.WorkerID, &x.Worker, &x.Engine, &x.HarnessSessionID, &x.Model, &x.Effort, &x.CreatedAt,
+			&x.Title, &x.Messages, &last, &x.Schedule, &x.WorkerRemoved)
 		x.LastActiveAt = &last
 		return x, err
 	})

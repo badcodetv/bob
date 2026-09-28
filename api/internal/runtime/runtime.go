@@ -9,9 +9,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,21 +26,22 @@ type Config struct {
 	// Hosts overrides where a project's runtime server is, by project name. Local development
 	// sets it, because a Bob running on the host cannot resolve container names.
 	Hosts map[string]string
-	// TokenKey derives each project's runtime token (see Token). Required.
-	TokenKey []byte
+	// Tokens is each project's runtime token, by project name (see TokenVar). Required.
+	Tokens map[string]string
 	// Wait is how long Ensure waits for a project's runtime server to answer. Zero means 30s.
 	Wait time.Duration
 }
 
-// Token is the password a project's runtime server requires on every request, so an agent in
-// another project's container cannot drive this one over the Docker network. The compose file
-// passes it to the container as BOB_RUNTIME_TOKEN; Bob derives the same value and puts it in the
-// base URL, from which Go's HTTP client sends it as basic auth (and leaves it out of error
-// messages). Bob and the compose generator must use the same BOB_RUNTIME_KEY.
-func Token(key []byte, project string) string {
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte("bob-runtime\x00" + project))
-	return hex.EncodeToString(mac.Sum(nil))
+// TokenVar names the variable holding a project's runtime token: the password its runtime server
+// requires on every request, so an agent in another project's container cannot drive this one
+// over the Docker network. Each project has its own random value, given to Bob under this name and
+// to the project's container as BOB_RUNTIME_TOKEN. Bob puts it in the base URL, from which Go's
+// HTTP client sends it as basic auth (and leaves it out of error messages).
+//
+// The name is upper-cased and - becomes _, because a shell variable cannot hold a -. Project names
+// are lower-case letters, digits and -, so no two map to the same variable.
+func TokenVar(project string) string {
+	return "BOB_RUNTIME_TOKEN_" + strings.ToUpper(strings.ReplaceAll(project, "-", "_"))
 }
 
 type Manager struct{ cfg Config }
@@ -57,11 +55,15 @@ func ContainerName(project string) string { return "bob-project-" + project }
 // Ensure returns the base URL of the project's runtime server, once it answers /health. It cannot
 // start anything: a container that is not running is a deploy problem, and says so.
 func (m *Manager) Ensure(ctx context.Context, p store.Project) (string, error) {
+	token, ok := m.cfg.Tokens[p.Name]
+	if !ok {
+		return "", fmt.Errorf("project %s has no runtime token: set %s", p.Name, TokenVar(p.Name))
+	}
 	host, ok := m.cfg.Hosts[p.Name]
 	if !ok {
 		host = fmt.Sprintf("%s:%d", ContainerName(p.Name), containerPort)
 	}
-	base := (&url.URL{Scheme: "http", User: url.UserPassword("bob", Token(m.cfg.TokenKey, p.Name)), Host: host}).String()
+	base := (&url.URL{Scheme: "http", User: url.UserPassword("bob", token), Host: host}).String()
 	return base, m.waitHealthy(ctx, p.Name, base)
 }
 

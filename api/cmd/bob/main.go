@@ -1,11 +1,16 @@
 // bob is the API: projects, sessions, turns, and the stored record of every event.
 //
 //	BOB_DATABASE_URL   postgres connection string (required)
-//	BOB_PROJECTS_FILE  the projects Bob serves, YAML (required). Each also has a container
-//	                   declared in the same deploy's compose file; Bob never starts one.
+//	BOB_PROJECTS       the projects Bob serves, comma-separated: enc,marketing,wolf (required).
+//	                   Each also has a container declared in the same deploy's compose file;
+//	                   Bob never starts one.
+//	BOB_RUNTIME_TOKEN_<NAME>  one per project (required): the password of its runtime server, the
+//	                   same value the compose file passes that container as BOB_RUNTIME_TOKEN.
+//	                   <NAME> is the project's name upper-cased, - as _. 32+ characters
+//	                   (openssl rand -hex 32).
+//	BOB_PUBLIC_URL     where people reach Bob, no trailing slash (required), e.g.
+//	                   https://bob.box.badcode.tv; for links to chats
 //	BOB_ADDR           listen address (default :8090)
-//	BOB_RUNTIME_KEY    derives each project's runtime password, and must match what the compose
-//	                   file passes that container as BOB_RUNTIME_TOKEN (required)
 //	BOB_RUNTIME_HOSTS  local development only: project=host:port,… when Bob runs on the host and
 //	                   cannot resolve container names
 //	GOOGLE_CLIENT_ID   Google sign-in (required)
@@ -24,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -31,7 +37,6 @@ import (
 	"github.com/badcodetv/bob/internal/access"
 	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/broker"
-	"github.com/badcodetv/bob/internal/projects"
 	"github.com/badcodetv/bob/internal/runtime"
 	"github.com/badcodetv/bob/internal/store"
 )
@@ -50,22 +55,22 @@ func main() {
 	}
 	defer st.Close()
 
-	projectsFile := os.Getenv("BOB_PROJECTS_FILE")
-	if projectsFile == "" {
-		log.Fatal("BOB_PROJECTS_FILE is required: the projects Bob serves")
-	}
-	list, err := projects.Load(projectsFile)
+	names, tokens, err := projectsFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := st.ReconcileProjects(ctx, list); err != nil {
-		log.Fatalf("reconciling %s: %v", projectsFile, err)
+	public, err := publicURL(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := st.ReconcileProjects(ctx, names); err != nil {
+		log.Fatalf("reconciling BOB_PROJECTS: %v", err)
 	}
 	if absent, err := st.AbsentProjects(ctx); err != nil {
 		log.Fatal(err)
 	} else if len(absent) > 0 {
-		log.Printf("not serving projects missing from %s (their chats and schedules are kept, and paused): %s",
-			projectsFile, strings.Join(absent, ", "))
+		log.Printf("not serving projects missing from BOB_PROJECTS (their chats and schedules are kept, and paused): %s",
+			strings.Join(absent, ", "))
 	}
 
 	people, deprecated, err := access.Load(os.Getenv)
@@ -80,24 +85,21 @@ func main() {
 		log.Fatal("GOOGLE_CLIENT_ID and BOB_SESSION_SECRET (16+ chars) are required")
 	}
 
-	runtimeKey := []byte(os.Getenv("BOB_RUNTIME_KEY"))
-	if len(runtimeKey) < 16 {
-		log.Fatal("BOB_RUNTIME_KEY (16+ chars) is required: it derives each project container's password")
-	}
 	hosts, err := parseHosts(os.Getenv("BOB_RUNTIME_HOSTS"))
 	if err != nil {
 		log.Fatalf("BOB_RUNTIME_HOSTS: %v", err)
 	}
 
 	app := &app{
-		auth:    signIn,
-		access:  people,
-		webDir:  os.Getenv("BOB_WEB_DIR"),
-		store:   st,
-		broker:  broker.New(),
-		runtime: runtime.NewManager(runtime.Config{Hosts: hosts, TokenKey: runtimeKey}),
-		turns:   map[string]context.CancelFunc{},
-		now:     time.Now,
+		auth:      signIn,
+		access:    people,
+		webDir:    os.Getenv("BOB_WEB_DIR"),
+		publicURL: public,
+		store:     st,
+		broker:    broker.New(),
+		runtime:   runtime.NewManager(runtime.Config{Hosts: hosts, Tokens: tokens}),
+		turns:     map[string]context.CancelFunc{},
+		now:       time.Now,
 	}
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
@@ -109,10 +111,58 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	log.Printf("bob listening on %s, serving %d projects from %s", srv.Addr, len(list), projectsFile)
+	log.Printf("bob listening on %s, serving %s", srv.Addr, strings.Join(names, ", "))
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// projectName is the shape the projects table enforces. A project's name is also its container
+// name and its volume name, so it can never change.
+var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+
+// projectsFromEnv reads BOB_PROJECTS and each listed project's runtime token. It fails rather than
+// guessing, naming the variable to fix: a bad name, a duplicate, or a missing or short token stops
+// Bob at boot, where it is obvious, instead of at the first turn.
+func projectsFromEnv(getenv func(string) string) (names []string, tokens map[string]string, err error) {
+	tokens = map[string]string{}
+	for _, name := range strings.Split(getenv("BOB_PROJECTS"), ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		switch variable := runtime.TokenVar(name); {
+		case !projectName.MatchString(name):
+			return nil, nil, fmt.Errorf("BOB_PROJECTS: project name %q must match %s", name, projectName)
+		case tokens[name] != "":
+			return nil, nil, fmt.Errorf("BOB_PROJECTS: project %q is listed twice", name)
+		case getenv(variable) == "":
+			return nil, nil, fmt.Errorf("%s is required: project %s's runtime token (openssl rand -hex 32), the same value its container gets as BOB_RUNTIME_TOKEN", variable, name)
+		case len(getenv(variable)) < 32:
+			return nil, nil, fmt.Errorf("%s is too short: 32+ characters (openssl rand -hex 32)", variable)
+		default:
+			names, tokens[name] = append(names, name), getenv(variable)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil, fmt.Errorf("BOB_PROJECTS is required: the projects Bob serves, comma-separated (e.g. enc,marketing)")
+	}
+	return names, tokens, nil
+}
+
+// publicURL reads BOB_PUBLIC_URL, where people reach Bob. Links to chats are built on it by
+// appending a path, so it must not end in a slash.
+func publicURL(getenv func(string) string) (string, error) {
+	u := getenv("BOB_PUBLIC_URL")
+	switch {
+	case u == "":
+		return "", fmt.Errorf("BOB_PUBLIC_URL is required: where people reach Bob, e.g. https://bob.box.badcode.tv")
+	case !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://"):
+		return "", fmt.Errorf("BOB_PUBLIC_URL must start with http:// or https://, got %q", u)
+	case strings.HasSuffix(u, "/"):
+		return "", fmt.Errorf("BOB_PUBLIC_URL must not end in /, got %q", u)
+	}
+	return u, nil
 }
 
 // parseHosts reads "project=host:port,other=host:port" (BOB_RUNTIME_HOSTS).
