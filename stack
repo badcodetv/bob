@@ -3,7 +3,7 @@
 # ./stack — the local development stack for Bob.
 #
 #   ./stack build          build the runtime image and install the web app's packages
-#   ./stack start          Postgres, a container per project, the API on :8090, the web app on :8080
+#   ./stack start          Postgres, the "dev" project container, the API on :8090, the web app on :8080
 #     [--attach]             ... and follow the logs here instead of returning
 #   ./stack stop           stop the API and the web app (Postgres is shared — it stays up)
 #   ./stack restart        stop, then start
@@ -16,8 +16,8 @@
 #   ./stack clean          remove every project container and volume (asks first)
 #
 # Deliberately small. The API and the web app run on the host — Go and Vite both
-# rebuild faster there. One container per project runs in Compose: Bob does not
-# start containers, it only talks to them.
+# rebuild faster there. One container, "dev" (deploy/compose.dev.yml), plays the part the box's
+# per-project containers play in production: Bob does not start containers, it only talks to them.
 #
 # Postgres is NOT Bob's. It is the one shared local Postgres in the ops repository
 # (ops/apps/postgres), built from the same Dockerfile as the box, so a laptop runs
@@ -25,18 +25,13 @@
 # own database and role there, exactly as on the box. Set OPS_DIR if ops is not at
 # ~/projects/badcode/ops.
 #
-# The projects are projects.dev.yaml, from which scripts/compose-projects.mjs
-# generates .stack/projects.yml. A project there publishes its runtime port on
-# 127.0.0.1, because a Bob on the host cannot resolve container names.
-#
-# Settings come from .env (scripts/import-agent-bob-env writes one). Logs and
+# Settings come from .env, a real file here (deploy/env.example is the template). Logs and
 # process ids live in .stack/, which is git-ignored.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 RUN=.stack
-PROJECTS=projects.dev.yaml
-PROJECTS_YML="$RUN/projects.yml"
+COMPOSE_DEV=deploy/compose.dev.yml
 API_LOG="$RUN/api.log"
 WEB_LOG="$RUN/web.log"
 API_PID="$RUN/api.pid"
@@ -48,25 +43,17 @@ say() { printf '── %s\n' "$*"; }
 die() { printf '!! %s\n' "$*" >&2; exit 1; }
 running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 
-need_env() { [ -f .env ] || die "no .env — run scripts/import-agent-bob-env first"; }
+need_env() { [ -f .env ] || die "no .env — copy deploy/env.example to .env and fill it in"; }
 
-# projects_up regenerates the per-project compose file and brings those containers up. It sets
-# HOSTS, which the API needs to reach them on the host. The generated file holds no secret — it
-# names them as ${VAR} for compose to resolve from .env. Volumes are created first: they are
-# declared external so that `docker compose down -v` can never delete a project's history, and
-# compose will not create an external volume itself.
+# projects_up brings the "dev" project container up (deploy/compose.dev.yml). The volume is
+# created first: it is declared external so that `docker compose down -v` can never delete a
+# project's history, and compose will not create an external volume itself.
 projects_up() {
-  [ -f "$PROJECTS" ] || die "no $PROJECTS — it lists the projects this Bob serves"
   mkdir -p "$RUN"
-  # The generator needs BOB_RUNTIME_KEY and whatever each project's "pass" list names.
-  HOSTS=$(node scripts/compose-projects.mjs "$PROJECTS" "$PROJECTS_YML" --publish-from 8100) \
-    || die "could not generate $PROJECTS_YML"
-  for name in $(grep -oE '^  bob-project-[a-z0-9-]+:' "$PROJECTS_YML" | tr -d ' :' | sort -u); do
-    docker volume create "$name" >/dev/null
-  done
-  # --env-file: the generated file names its secrets as ${VAR}; compose would otherwise look for
-  # an .env beside it, in .stack/, and quietly substitute empty strings.
-  docker compose --env-file ./.env -f "$PROJECTS_YML" up -d >/dev/null
+  docker volume create bob-project-dev >/dev/null
+  # --env-file: the compose file names its secrets as ${VAR}; compose would otherwise look for
+  # an .env beside it, in deploy/, and quietly substitute empty strings.
+  docker compose --env-file ./.env -f "$COMPOSE_DEV" up -d >/dev/null
 }
 
 # The one shared local Postgres lives in the ops repository, because it is shared by every
@@ -107,7 +94,7 @@ start)
   else
     say "API on $API_URL"
     ( set -a; . ./.env; set +a
-      export BOB_PROJECTS_FILE="$PWD/$PROJECTS" BOB_RUNTIME_HOSTS="$HOSTS"
+      export BOB_PROJECTS=dev BOB_RUNTIME_HOSTS=dev=127.0.0.1:8100
       cd api && exec go run ./cmd/bob ) >"$API_LOG" 2>&1 &
     echo $! >"$API_PID"
   fi
@@ -161,7 +148,7 @@ status)
     say "Postgres: stopped"
   fi
   if curl -sf "$API_URL/healthz" >/dev/null 2>&1; then
-    "$0" sql "select name, repo_url, coalesce(absent_at::text, 'served') from projects order by name" 2>/dev/null | sed 's/^/   project: /'
+    "$0" sql "select name, coalesce(absent_at::text, 'served') from projects order by name" 2>/dev/null | sed 's/^/   project: /'
     "$0" sql "select value from settings where key = 'schedules_paused'" 2>/dev/null \
       | sed 's/^t\(rue\)\{0,1\}$/   schedules: PAUSED (Run now still works)/; s/^f\(alse\)\{0,1\}$/   schedules: running/'
   fi
@@ -196,8 +183,8 @@ test)
   # deliberately cannot (one database per app is the rule production enforces).
   say "Go (throwaway databases on the shared local Postgres)"
   (cd api && BOB_TEST_DATABASE_URL=postgres://postgres:local@127.0.0.1:5432/postgres?sslmode=disable go test ./...)
-  say "runtime"
-  (cd runtime && npm test --silent)
+  say "runtime (rebuilt first, so deleted tests stop running and new ones start)"
+  (cd runtime && rm -rf dist && npm run build && npm test --silent)
   say "web typecheck"
   (cd web && npx tsc -b)
   say "all green"
@@ -216,8 +203,7 @@ clean)
   [ "$answer" = y ] || { say "stopped"; exit 1; }
   docker rm -f $(docker ps -aq --filter name=bob-project-) >/dev/null
   docker volume ls -q --filter name=bob-project- | xargs -r docker volume rm >/dev/null
-  rm -f "$PROJECTS_YML"
-  say "removed. ./stack start makes them again, and each re-clones its repository."
+  say "removed. ./stack start makes them again."
   ;;
 
 *)

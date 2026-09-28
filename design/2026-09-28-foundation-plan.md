@@ -562,7 +562,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   requires `BOB_RUNTIME_TOKEN` and `BOB_API_URL` only (`BOB_PROJECT_NAME` is no longer read). See
   the Discovered Issues Log for `store.Worker` (by name) and interim gaps.
 
-### T3: Compose files and secrets in this repo; `./stack` uses them   [Status: pending | Model: sonnet]
+### T3: Compose files and secrets in this repo; `./stack` uses them   [Status: done | Model: sonnet]
 - **Scope:**
   1. **Secrets become real files here.** Replace the `.env` symlink with its contents:
      `cp --remove-destination "$(readlink -f .env)" .env` (ask Kai first). Do not touch the ops copy
@@ -615,8 +615,25 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `TAG=x docker compose --env-file deploy/env.example -f deploy/compose.yml config >/dev/null` → exit 0;
   `test -L .env` → exit 1.
 - **Depends on:** T2
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) `./stack clean` removed containers `bob-project-{bob-examples,local,wolf}` and
+  all five volumes (`bob-project-{bob-examples,demo,local,marketing,wolf}`) in one pass — it filters
+  by the `bob-project-` name prefix, not a fixed list, so no leftover volumes needed a manual
+  `docker volume rm`. Schema reset as `app_bob` dropped 8 objects (events, project_secrets,
+  projects, schedule_runs, schedules, schema_migrations, sessions, settings) — the old pre-baseline
+  tables. `.env` is now a real file (`cp --remove-destination`) with `BOB_RUNTIME_TOKEN_DEV` and
+  `BOB_PUBLIC_URL=http://localhost:8080` appended; the ops symlink target
+  (`ops/secrets/bob/.env.local`) was read but not modified. All Validation commands pass: Go +
+  runtime + web tests "all green"; compose config dummy-value check exits 0; `test -L .env` exits 1;
+  `git status --short` does not list `.env`; the runtime `/health` curl (port 8100, basic auth)
+  returns `{"ok":true,"draining":false}`; `select name from projects` returns only `dev`.
+  `./stack build` and the API code itself boot correctly (verified by running it directly with an
+  alternate `BOB_ADDR` — `/healthz` answered `ok`). See the Discovered Issues Log: `./stack start`
+  cannot bind `:8090` while Kai's Platinum project (`/home/kai/projects/bayesprice/Platinum`,
+  container `platinum-development-carbon`) is running, because it publishes `0.0.0.0:8090` on the
+  same laptop. Orchestrator correction: an earlier note called this another tenant of a sandbox; it
+  is Kai's own project. `bob-project-dev` and
+  the web app (`:8080`) are left running for Kai; the host API process is not, since it cannot bind.
 
 ### T4: Workers and project prompt in the store   [Status: pending | Model: sonnet]
 - **Scope:** Complete `api/internal/store/workers.go` exactly as in Interfaces → Go store (T4),
@@ -1188,3 +1205,11 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **T2:** the executor inspected the built image with one `docker run --rm --entrypoint sh
   bob-runtime:dev -c 'ls …'` (a throwaway container, removed on exit) to confirm `sync.sh` and
   `bob-push` are gone and the git credential helper is kept.
+- **T3 — port clash with Kai's Platinum project:** `platinum-development-carbon` (compose project
+  `platinum`, `/home/kai/projects/bayesprice/Platinum`) publishes `0.0.0.0:8090`, the port
+  `./stack start` runs the Go API on, so `./stack start` fails with "address already in use" while
+  Platinum runs. The code is fine: run with `BOB_ADDR=:18090` the API booted and `/healthz`
+  answered `ok`. Open question for Kai: stop Platinum while working on Bob, or move Bob's dev API off
+  8090 (it is also the port `BOB_API_URL` in `deploy/compose.dev.yml` and the Vite proxy use).
+  (Orchestrator correction of the executor's first wording, which called this another tenant of a
+  sandbox and said Kai's laptop would not have it.)

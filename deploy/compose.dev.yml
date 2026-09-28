@@ -1,0 +1,34 @@
+# Bob's own project on the laptop: one runtime container, "dev", for local development and
+# manual testing. It plays the part the box's per-project containers (deploy/compose.yml) play in
+# production, but built from the image ./stack builds locally (bob-runtime:dev) rather than one
+# pulled from the registry.
+#
+# The API itself runs on the host (./stack start), not in Compose — Go rebuilds faster there — so
+# this container reaches it over host.docker.internal, and BOB_API_URL says so.
+name: bob-dev
+
+services:
+  bob-project-dev:
+    image: bob-runtime:dev
+    container_name: bob-project-dev
+    restart: unless-stopped
+    init: true
+    environment:
+      BOB_PROJECT_NAME: dev
+      BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_DEV:?}
+      BOB_API_URL: http://host.docker.internal:8090
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8100:8080"
+    volumes:
+      - bob-project-dev:/project
+    mem_limit: 8g
+    pids_limit: 4096
+    stop_grace_period: 10m
+
+volumes:
+  bob-project-dev:
+    external: true

@@ -1,0 +1,61 @@
+# Bob (github.com/badcodetv/bob) on the box. Images from Artifact Registry repo `bob` at ${TAG}
+# (release.env). Secrets in .env.box (box only, gitignored, never committed).
+#
+# This repository owns its own deployment now (design/2026-09-28-foundation-plan.md, Decision 15):
+# this file, deploy/env.example and ./stack deploy <tag> replace the compose file the ops
+# repository used to generate from projects.yaml. This file only NAMES variables — it is public —
+# so every secret it names must be set in .env.box or the box API/project container never sees it.
+#
+# Bob does NOT start containers and has NO Docker socket. Each project has a service of its own,
+# declared by hand below (Decision 4: BOB_PROJECTS, one BOB_RUNTIME_TOKEN_<NAME> per project). Bob
+# reaches them by name on the bob-projects network, which joins nothing else: no Postgres, and
+# apps on 127.0.0.1 are out of reach.
+name: bob
+
+services:
+  api:
+    image: europe-west1-docker.pkg.dev/webkit-servers/bob/api:${TAG:?run ./stack deploy <tag>}
+    restart: unless-stopped
+    # Named one by one rather than `env_file: .env.box`, which would hand the API every project's
+    # credentials as well. Bob does not run agents and has no use for them; only the project
+    # containers do, and each gets only what its own environment names.
+    environment:
+      BOB_DATABASE_URL: ${BOB_DATABASE_URL:?}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?}
+      BOB_SESSION_SECRET: ${BOB_SESSION_SECRET:?}
+      BOB_PROJECT_MAP: ${BOB_PROJECT_MAP:?}
+      BOB_PUBLIC_URL: ${BOB_PUBLIC_URL:?}
+      BOB_PROJECTS: enc
+      BOB_RUNTIME_TOKEN_ENC: ${BOB_RUNTIME_TOKEN_ENC:?}
+    networks: [box-db, bob-projects]
+    ports:
+      - "127.0.0.1:8100:8090"              # Caddy only
+    mem_limit: 1g
+
+  bob-project-enc:
+    image: europe-west1-docker.pkg.dev/webkit-servers/bob/runtime:${TAG:?run ./stack deploy <tag>}
+    container_name: bob-project-enc
+    init: true
+    restart: unless-stopped
+    environment:
+      BOB_PROJECT_NAME: enc
+      BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_ENC:?}
+      BOB_API_URL: http://api:8090
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_ENC:?}
+    volumes:
+      - bob-project-enc:/project
+    networks: [bob-projects]
+    mem_limit: 8g
+    pids_limit: 4096
+    stop_grace_period: 10m
+
+networks:
+  box-db:
+    external: true
+  bob-projects:
+    external: true
+
+volumes:
+  bob-project-enc:
+    external: true
