@@ -635,7 +635,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   is Kai's own project. `bob-project-dev` and
   the web app (`:8080`) are left running for Kai; the host API process is not, since it cannot bind.
 
-### T4: Workers and project prompt in the store   [Status: pending | Model: sonnet]
+### T4: Workers and project prompt in the store   [Status: done | Model: sonnet]
 - **Scope:** Complete `api/internal/store/workers.go` exactly as in Interfaces → Go store (T4),
   replacing T2's minimal version. Tools are stored as jsonb `null` when nil; `Labels` is always
   `{}` for now.
@@ -647,8 +647,13 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes.
 - **Validation:** `./stack test` → "all green".
 - **Depends on:** T1
-- [ ] done
-- Notes:
+- [x] done
+- Notes: Implemented as scoped in `api/internal/store/workers.go` with tests in
+  `workers_test.go`. `Labels` has no column yet (T18); `scanWorker` always sets it to `map[string]string{}`
+  so callers never see nil. `DeleteWorker` locks the worker row (`FOR UPDATE`) before snapshotting
+  it, so the version row always reflects what was actually deleted. Unique-violation detection
+  uses `errors.As` against `*pgconn.PgError` (code `23505`), matching store.go's existing error
+  style. `./stack test` all green; `go vet ./...` clean.
 
 ### T5: API — worker routes, prompt composition, plain chats   [Status: pending | Model: sonnet]
 - **Scope:** Add the worker and prompt routes (Interfaces → API HTTP) in `api/cmd/bob/workers.go`,
