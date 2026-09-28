@@ -169,6 +169,7 @@ func newScheduleApp(t *testing.T) (*app, *fakeRuntime, *clock) {
 	t.Cleanup(srv.Close)
 	c := &clock{t: time.Now()}
 	a := &app{auth: &auth.Auth{Secret: []byte("0123456789abcdef")}, store: st, broker: broker.New(), runtime: fakeContainers{srv.URL}, now: c.now, turns: map[string]context.CancelFunc{}}
+	st.Now = c.now // a queued run's start is stamped by the store
 	if err := st.ReconcileProjects(t.Context(), []string{"wolf"}); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func TestScheduleNoOverlap(t *testing.T) {
 	if got := statuses(runs(t, a, sch)); got != "cron:running cron:skipped" {
 		t.Fatalf("second firing during the first run: %s", got)
 	}
-	if r := runs(t, a, sch)[1]; r.Detail != "previous run still running" {
+	if r := runs(t, a, sch)[1]; r.Detail != "previous run still queued or running" {
 		t.Errorf("skip detail = %q", r.Detail)
 	}
 	if run, err := a.fire(t.Context(), sch, "manual"); err != nil || run.Status != "skipped" {
@@ -398,5 +399,120 @@ func TestTurningAScheduleBackOnDoesNotCatchUp(t *testing.T) {
 	a.scheduled.Wait()
 	if got := statuses(runs(t, a, sch)); got != "cron:ok" {
 		t.Errorf("next firing: %s", got)
+	}
+}
+
+// sessionRun finds the run whose session is id.
+func sessionRun(t *testing.T, a *app, id string, schedules ...store.Schedule) store.Run {
+	t.Helper()
+	for _, sch := range schedules {
+		for _, r := range runs(t, a, sch) {
+			if r.SessionID != nil && *r.SessionID == id {
+				return r
+			}
+		}
+	}
+	t.Fatalf("no run has session %s", id)
+	return store.Run{}
+}
+
+// Two schedules of one project due in the same minute run one after the other; another
+// project's schedule runs alongside; a person's chat in the busy project is not held up.
+func TestScheduledRunsQueuePerProject(t *testing.T) {
+	a, rt, c := newScheduleApp(t)
+	if err := a.store.ReconcileProjects(t.Context(), []string{"wolf", "enc"}); err != nil {
+		t.Fatal(err)
+	}
+	encWorker := insertWorker(t, a.store, "enc", "writer", "claude")
+	rt.hold, rt.started = make(chan struct{}), make(chan string, 8)
+	first := create(t, a, store.Schedule{Name: "first", Cron: "*/15 * * * *"})
+	second := create(t, a, store.Schedule{Name: "second", Cron: "*/15 * * * *"})
+	enc, err := a.store.CreateSchedule(t.Context(), store.Schedule{Project: "enc", Name: "enc-daily", WorkerID: encWorker,
+		Cron: "*/15 * * * *", Timezone: "UTC", Message: "write", Enabled: true, KeepSessions: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firing := first.CreatedAt.Truncate(15 * time.Minute).Add(15 * time.Minute)
+	c.set(firing.Add(10 * time.Second))
+	a.tick(t.Context())
+
+	// One wolf run and the enc run start; the other wolf run waits its turn.
+	started := map[string]bool{}
+	for range 2 {
+		started[sessionRun(t, a, <-rt.started, first, second, enc).ScheduleID] = true
+	}
+	if !started[enc.ID] || started[first.ID] == started[second.ID] {
+		t.Fatalf("started: %v; want enc and exactly one of wolf's", started)
+	}
+	waiting, going := second, first
+	if started[second.ID] {
+		waiting, going = first, second
+	}
+	if got := statuses(runs(t, a, waiting)); got != "cron:queued" {
+		t.Errorf("wolf's other schedule: %s, want queued", got)
+	}
+	if got := statuses(runs(t, a, going)) + " " + statuses(runs(t, a, enc)); got != "cron:running cron:running" {
+		t.Errorf("running: %s", got)
+	}
+	// Run now on the waiting schedule is skipped: it already has a run queued.
+	if run, err := a.fire(t.Context(), waiting, "manual"); err != nil || run.Status != "skipped" {
+		t.Errorf("run now while queued: %+v %v", run, err)
+	}
+
+	// A person's chat in wolf goes straight to the runtime, scheduled run or not.
+	chat, err := a.store.CreateSession(t.Context(), "wolf", nil, "", "claude", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, turn, err := a.startTurn(t.Context(), chat, auth.User{Email: "kai@example.com"}, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatDone := make(chan error, 1)
+	go func() { chatDone <- turn() }()
+	if id := <-rt.started; id != chat.ID {
+		t.Fatalf("started %s, want the chat %s", id, chat.ID)
+	}
+
+	// Let everything finish: the waiting run starts only once the first has finished.
+	close(rt.hold)
+	id := <-rt.started
+	if r := sessionRun(t, a, id, waiting); r.ScheduleID != waiting.ID {
+		t.Fatalf("third scheduled turn: %+v", r)
+	}
+	if rs := runs(t, a, going); rs[0].Status != "ok" {
+		t.Errorf("when wolf's second run started, its first was %s, want finished", rs[0].Status)
+	}
+	a.scheduled.Wait()
+	if err := <-chatDone; err != nil {
+		t.Errorf("chat turn: %v", err)
+	}
+	if got := statuses(runs(t, a, waiting)); got != "cron:ok manual:skipped" {
+		t.Errorf("wolf's queued schedule after: %s", got)
+	}
+}
+
+// Run now queues; a queued run left by a restart (or queued while nothing dispatched) starts on
+// the next tick, paused or not — the firing was already accepted.
+func TestQueuedRunsStartOnTheNextTick(t *testing.T) {
+	a, _, _ := newScheduleApp(t)
+	sch := create(t, a, store.Schedule{Name: "left-over", Cron: "0 6 * * *"})
+	if _, err := a.store.StartRun(t.Context(), sch.ID, "manual", a.now()); err != nil {
+		t.Fatal(err)
+	}
+	a.store.SetSchedulesPaused(t.Context(), true)
+	a.tick(t.Context())
+	a.scheduled.Wait()
+	if got := statuses(runs(t, a, sch)); got != "manual:ok" {
+		t.Errorf("left-over queued run after a tick: %s", got)
+	}
+
+	run, err := a.fire(t.Context(), sch, "manual")
+	a.scheduled.Wait()
+	if err != nil || run.Status != "queued" {
+		t.Errorf("run now: %+v %v; want it recorded as queued", run, err)
+	}
+	if got := statuses(runs(t, a, sch)); got != "manual:ok manual:ok" {
+		t.Errorf("after run now: %s", got)
 	}
 }

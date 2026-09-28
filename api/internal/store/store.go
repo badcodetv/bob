@@ -19,7 +19,19 @@ var migrations embed.FS
 
 var ErrNotFound = errors.New("not found")
 
-type Store struct{ db *pgxpool.Pool }
+type Store struct {
+	db *pgxpool.Pool
+	// Now is the store's clock, for the times it stamps itself (a queued run's start); nil is
+	// time.Now. Tests set it to the app's clock.
+	Now func() time.Time
+}
+
+func (s *Store) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
 
 func Open(ctx context.Context, url string) (*Store, error) {
 	db, err := pgxpool.New(ctx, url)

@@ -24,8 +24,8 @@ export function Schedules({ project, admin, workers, onRan, onError }: {
 
   const load = useCallback(() => api.schedules(project).then((r) => { setList(r.schedules); setPaused(r.paused) }).catch(onError), [project, onError])
   useEffect(() => { load() }, [load])
-  // Refresh often while a run is going, otherwise once a minute (next firings move on).
-  const running = list?.some((s) => s.last_run?.status === 'running')
+  // Refresh often while a run is queued or going, otherwise once a minute (next firings move on).
+  const running = list?.some((s) => s.last_run?.status === 'running' || s.last_run?.status === 'queued')
   useEffect(() => {
     const t = setInterval(load, running ? 5_000 : 60_000)
     return () => clearInterval(t)
@@ -97,7 +97,8 @@ function ScheduleRow({ project, schedule: s, engine, admin, paused, onRunNow, on
   useEffect(() => {
     if (open) api.scheduleRuns(s.id).then(setHistory).catch(onError)
   }, [open, s.id, lastRunKey, onError])
-  const running = s.last_run?.status === 'running'
+  // A schedule with a queued or running run skips any other firing, so Run now is pointless.
+  const busy = s.last_run?.status === 'queued' || s.last_run?.status === 'running'
 
   return (
     <li className="flex flex-col gap-2 border-t px-1 py-4 first:border-t-0">
@@ -112,7 +113,7 @@ function ScheduleRow({ project, schedule: s, engine, admin, paused, onRunNow, on
           <Button variant="ghost" size="sm" onClick={() => onEnabled(!s.enabled)}>{s.enabled ? 'Turn off' : 'Turn on'}</Button>
         )}
         {admin && <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>}
-        <Button variant="outline" size="sm" onClick={onRunNow} disabled={running}>{running ? 'Running…' : 'Run now'}</Button>
+        <Button variant="outline" size="sm" onClick={onRunNow} disabled={busy}>{!busy ? 'Run now' : s.last_run?.status === 'queued' ? 'Queued…' : 'Running…'}</Button>
       </div>
 
       <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13.5px]">
@@ -147,12 +148,13 @@ function Label({ children }: { children: ReactNode }) {
 }
 
 const statusStyle: Record<ScheduleRun['status'], string> = {
+  queued: 'text-faint',
   running: 'text-cobalt',
   ok: 'text-foreground',
   failed: 'text-destructive',
   skipped: 'text-warn',
 }
-const statusWord: Record<ScheduleRun['status'], string> = { running: 'Running', ok: 'Done', failed: 'Failed', skipped: 'Skipped' }
+const statusWord: Record<ScheduleRun['status'], string> = { queued: 'Queued', running: 'Running', ok: 'Done', failed: 'Failed', skipped: 'Skipped' }
 
 function RunLine({ project, run }: { project: string; run: ScheduleRun }) {
   return (

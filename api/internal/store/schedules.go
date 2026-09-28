@@ -102,11 +102,12 @@ func (s *Store) Schedules(ctx context.Context, project string) ([]Schedule, erro
 
 // Run is one firing, manual run or skip of a schedule.
 type Run struct {
-	ID         int64      `json:"id"`
-	ScheduleID string     `json:"schedule_id"`
-	SessionID  *string    `json:"session_id"`
-	Trigger    string     `json:"trigger"` // cron | manual
-	Status     string     `json:"status"`  // running | ok | failed | skipped
+	ID         int64   `json:"id"`
+	ScheduleID string  `json:"schedule_id"`
+	SessionID  *string `json:"session_id"`
+	Trigger    string  `json:"trigger"` // cron | manual
+	Status     string  `json:"status"`  // queued | running | ok | failed | skipped
+	// StartedAt is when the run was queued (or skipped), then when it started running.
 	Detail     string     `json:"detail"`
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
@@ -123,9 +124,9 @@ func scanRun(row pgx.Row) (Run, error) {
 	return x, err
 }
 
-// StartRun records a run as running, unless the schedule already has one running: then it
-// records a skipped run instead. The schedule's row is locked while deciding, so two callers
-// can never both start.
+// StartRun records a firing as a queued run, for NextQueuedRun to start — unless the schedule
+// already has a run queued or running: then it records a skipped run instead. The schedule's row
+// is locked while deciding, so two callers can never both queue.
 func (s *Store) StartRun(ctx context.Context, scheduleID, trigger string, at time.Time) (Run, error) {
 	var run Run
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
@@ -137,12 +138,12 @@ func (s *Store) StartRun(ctx context.Context, scheduleID, trigger string, at tim
 			return err
 		}
 		var busy bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schedule_runs WHERE schedule_id = $1 AND status = 'running')`, scheduleID).Scan(&busy); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schedule_runs WHERE schedule_id = $1 AND status IN ('queued', 'running'))`, scheduleID).Scan(&busy); err != nil {
 			return err
 		}
-		status, detail, finished := "running", "", (*time.Time)(nil)
+		status, detail, finished := "queued", "", (*time.Time)(nil)
 		if busy {
-			status, detail, finished = "skipped", "previous run still running", &at
+			status, detail, finished = "skipped", "previous run still queued or running", &at
 		}
 		var err error
 		run, err = scanRun(tx.QueryRow(ctx, `INSERT INTO schedule_runs (schedule_id, trigger, status, detail, started_at, finished_at)
@@ -150,6 +151,33 @@ func (s *Store) StartRun(ctx context.Context, scheduleID, trigger string, at tim
 		return err
 	})
 	return run, err
+}
+
+// NextQueuedRun starts a project's oldest queued run — flips it to running, started now — and
+// returns it, unless the project already has a scheduled run running (or nothing queued): then
+// ok is false. A project-wide advisory lock makes concurrent callers take turns, so a project
+// never has two scheduled runs running. People's chats are not runs and never wait here.
+func (s *Store) NextQueuedRun(ctx context.Context, project string) (run Run, ok bool, err error) {
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('bob-schedule:' || $1))`, project); err != nil {
+			return err
+		}
+		var busy bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id
+			WHERE s.project = $1 AND r.status = 'running')`, project).Scan(&busy); err != nil || busy {
+			return err
+		}
+		var err error
+		run, err = scanRun(tx.QueryRow(ctx, `UPDATE schedule_runs SET status = 'running', started_at = $2 WHERE id = (
+			SELECT r.id FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id
+			WHERE s.project = $1 AND r.status = 'queued' ORDER BY r.id LIMIT 1) RETURNING `+runCols, project, s.now()))
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		ok = err == nil
+		return err
+	})
+	return run, ok, err
 }
 
 // SkipRun records a firing that did not run, with the reason.
@@ -175,7 +203,8 @@ func (s *Store) FinishRun(ctx context.Context, runID int64, status, detail strin
 }
 
 // FailInterruptedRuns marks runs left running by a previous Bob process as failed, so they do
-// not block their schedules forever.
+// not block their schedules (and their project's queue) forever. Queued runs are kept: they
+// start on the next dispatch.
 func (s *Store) FailInterruptedRuns(ctx context.Context, at time.Time) error {
 	_, err := s.db.Exec(ctx, `UPDATE schedule_runs SET status = 'failed', detail = 'Bob stopped during the run', finished_at = $1
 		WHERE status = 'running'`, at)

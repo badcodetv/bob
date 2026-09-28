@@ -30,7 +30,8 @@ export interface Schedule {
 }
 export interface ScheduleRun {
   id: number; schedule_id: string; session_id: string | null; trigger: 'cron' | 'manual'
-  status: 'running' | 'ok' | 'failed' | 'skipped'; detail: string; started_at: string; finished_at: string | null
+  /** queued: waiting for the project's current scheduled run to finish (one at a time per project). */
+  status: 'queued' | 'running' | 'ok' | 'failed' | 'skipped'; detail: string; started_at: string; finished_at: string | null
 }
 export interface ScheduleView extends Schedule { next_at: string | null; last_run: ScheduleRun | null }
 export type ScheduleInput = Pick<Schedule, 'name' | 'worker' | 'cron' | 'timezone' | 'message' | 'enabled' | 'keep_sessions'>

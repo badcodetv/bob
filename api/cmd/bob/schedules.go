@@ -16,7 +16,8 @@ import (
 )
 
 // scheduleLoop fires due schedules once a minute until ctx ends. Runs left "running" by a
-// previous process are marked failed first, so they don't block their schedules forever.
+// previous process are marked failed first, so they don't block their schedules forever; runs it
+// left queued start on the first tick.
 func (a *app) scheduleLoop(ctx context.Context) {
 	if err := a.store.FailInterruptedRuns(ctx, a.now()); err != nil {
 		log.Printf("schedules: %v", err)
@@ -33,8 +34,17 @@ func (a *app) scheduleLoop(ctx context.Context) {
 
 // tick starts every enabled schedule whose cron has fired since it last fired (or was created).
 // Several missed firings run once; a firing missed by more than schedule.CatchUp is recorded as
-// skipped instead. Nothing fires while schedules are paused.
+// skipped instead. Nothing fires while schedules are paused. Every project's queue is dispatched
+// first, paused or not: a queued run was already accepted (a restart, or a missed dispatch, can
+// leave one waiting), just as Run now works while paused.
 func (a *app) tick(ctx context.Context) {
+	if projects, err := a.store.Projects(ctx); err != nil {
+		log.Printf("schedules: %v", err)
+	} else {
+		for _, p := range projects {
+			a.dispatch(ctx, p.Name)
+		}
+	}
 	if paused, err := a.store.SchedulesPaused(ctx); err != nil || paused {
 		if err != nil {
 			log.Printf("schedules: %v", err)
@@ -82,19 +92,42 @@ func (a *app) tick(ctx context.Context) {
 	}
 }
 
-// fire records a run and executes it in the background — or records it as skipped when the
-// schedule's previous run is still going.
+// fire records a queued run and dispatches the schedule's project — or records the firing as
+// skipped when the schedule already has a run queued or running. The run is returned as recorded.
 func (a *app) fire(ctx context.Context, sch store.Schedule, trigger string) (store.Run, error) {
 	run, err := a.store.StartRun(ctx, sch.ID, trigger, a.now())
 	if err != nil || run.Status == "skipped" {
 		return run, err
 	}
+	a.dispatch(ctx, sch.Project)
+	return run, nil
+}
+
+// dispatch starts the project's oldest queued run in the background, if the project has no
+// scheduled run going (store.NextQueuedRun), so a project runs its scheduled runs one at a time.
+// When that run finishes it dispatches again, for the next one in the queue. People's chats
+// never pass through here.
+func (a *app) dispatch(ctx context.Context, project string) {
+	run, ok, err := a.store.NextQueuedRun(ctx, project)
+	if err != nil {
+		log.Printf("schedules: dispatching %s: %v", project, err)
+	}
+	if !ok {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
 	a.scheduled.Add(1)
 	go func() {
 		defer a.scheduled.Done()
-		a.execute(context.WithoutCancel(ctx), sch, run)
+		if sch, err := a.store.Schedule(ctx, run.ScheduleID); err != nil {
+			if err := a.store.FinishRun(ctx, run.ID, "failed", fmt.Sprintf("schedule: %v", err), a.now()); err != nil {
+				log.Printf("schedule run %d: %v", run.ID, err)
+			}
+		} else {
+			a.execute(ctx, sch, run)
+		}
+		a.dispatch(ctx, project)
 	}()
-	return run, nil
 }
 
 // execute is one run: start a session on the schedule's worker with its message, wait for the
@@ -282,8 +315,9 @@ func (a *app) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]bool{"ok": true}, a.store.DeleteSchedule(r.Context(), r.PathValue("schedule")))
 }
 
-// runScheduleNow runs a schedule once, now, whether or not it is enabled or schedules are
-// paused: a person asked for it. It is skipped if the previous run is still going.
+// runScheduleNow queues a run of a schedule, whether or not it is enabled or schedules are
+// paused: a person asked for it. It starts when the project has no other scheduled run going,
+// and is skipped if the schedule already has a run queued or running.
 func (a *app) runScheduleNow(w http.ResponseWriter, r *http.Request) {
 	sch, err := a.store.Schedule(r.Context(), r.PathValue("schedule"))
 	if err != nil {

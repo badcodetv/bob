@@ -1427,7 +1427,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `haiku-writer` worker and the test chat session; the pre-existing `poet` worker (from T10) and
   its earlier chat were left untouched.
 
-### T20: One scheduled run at a time per project   [Status: pending | Model: opus]
+### T20: One scheduled run at a time per project   [Status: done | Model: opus]
 - **Scope:** Migration `003_schedule_queue.sql`: drop and re-add the `schedule_runs.status` CHECK
   to allow `queued`. `StartRun` (`store/schedules.go:110`): if this schedule has a `queued` or
   `running` run → insert `skipped` ("previous run still queued or running"); else insert `queued`.
@@ -1446,8 +1446,50 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes — including two concurrent `NextQueuedRun` callers, only one of which gets the run.
 - **Validation:** `./stack test` → "all green"; `cd web && npx tsc -b` → clean.
 - **Depends on:** T19
-- [ ] done
-- Notes:
+- [x] done
+- Notes: migration `api/internal/store/migrations/003_schedule_queue.sql` drops and re-adds
+  `schedule_runs_status_check` with `queued`, plus a partial index `schedule_runs_active (status, id)
+  WHERE status IN ('queued','running')` for the dispatcher. `store.StartRun` now inserts `queued`
+  (or `skipped`, detail "previous run still queued or running", when the schedule has a queued or
+  running run; still under the schedule's `FOR UPDATE`). New `store.NextQueuedRun(ctx, project)
+  (Run, bool, error)`: one transaction, `pg_advisory_xact_lock(hashtext('bob-schedule:' ||
+  project))`, returns false if the project has a `running` run, else flips its oldest (`ORDER BY
+  id`) `queued` run to `running` and returns it. `FailInterruptedRuns` unchanged in SQL (it already
+  only touched `running`); comment updated. App (`api/cmd/bob/schedules.go`): `fire` = `StartRun`
+  then `a.dispatch(ctx, sch.Project)` and returns the run as recorded (`queued`/`skipped`); new
+  `a.dispatch` calls `NextQueuedRun` and runs `execute` in a goroutine tracked by `a.scheduled`
+  (re-reading the schedule by the run's `schedule_id`; if that fails the run is finished `failed`),
+  then dispatches the project again once the run has been finished — so `a.scheduled.Wait()` still
+  covers a whole chain. `tick` dispatches every present project (`store.Projects`) first, **before
+  the paused check** (a queued run was already accepted, same as Run now works while paused).
+  `runScheduleNow` goes through `fire`, so it queues. Web: `api.ts` `ScheduleRun.status` gains
+  `queued`; `Schedules.tsx` shows "Queued" (faint), polls every 5s while any last run is queued or
+  running, and disables Run now with "Queued…"/"Running…". **Deviation:** `NextQueuedRun` stamps
+  `started_at` from a new `Store.Now func() time.Time` field (nil = `time.Now`, so production is
+  exactly `now()`) instead of SQL `now()`: `LastCronRun` reads `max(started_at)`, and in the
+  fake-clock app tests a DB `now()` put the "last firing" in real time, before the fake firing, so
+  ticks re-fired (e.g. `TestScheduleMissedFirings`'s double tick). `newScheduleApp` sets
+  `st.Now = c.now`. TDD: failing tests first — `api/internal/store/schedules_test.go` (new):
+  `TestStartRunQueues`, `TestNextQueuedRunOneAtATimePerProject` (oldest first, other project not
+  held, next after finish), `TestNextQueuedRunConcurrentCallers` (two goroutines, 5 rounds with one
+  and with two queued runs; exactly one caller gets a run — confirmed it fails with 2 winners when
+  the advisory lock is removed), `TestFailInterruptedRunsKeepsQueued`; `store_test.go`'s
+  migration list gains `003_schedule_queue.sql`; `api/cmd/bob/schedules_test.go`:
+  `TestScheduleNoOverlap` detail text updated, new `TestScheduledRunsQueuePerProject` (two wolf
+  schedules due in the same minute: one runs, one `queued`; enc's runs concurrently; Run now on the
+  queued one is skipped; a person's chat in wolf reaches the runtime while wolf's run is held; the
+  queued run starts only after the first is `ok`) and `TestQueuedRunsStartOnTheNextTick` (a
+  left-over queued run starts on a paused tick; Run now returns `queued`). Also passes `-race
+  -count=3`. Validation: `go vet ./...` clean; `BOB_TEST_DATABASE_URL=... go test ./... -count=1 -v
+  | grep -cE -- "--- (SKIP|FAIL)"` → `0`; `./stack test` → "── all green"; `cd web && npx tsc -b`
+  clean; `./stack build && ./stack restart`, `/healthz` → `ok`, local `bob` db has
+  `003_schedule_queue.sql` applied and the new CHECK. Manual (minted cookie via a throwaway stdlib
+  program in the scratchpad, deleted after): on `dev`, created disabled schedules `t20-a`/`t20-b`
+  on the existing `poet` (claude) worker, then Run now on a, b, b: responses `queued`, `queued`,
+  `skipped` ("previous run still queued or running"); runs table afterwards: a `ok` 19:42:02.56 →
+  19:42:09.583, b `ok` started 19:42:09.587 (4ms after a finished) → 19:44:32, both with
+  `bob.turn_done`. Cleaned up: deleted both runs' sessions and both schedules; `schedules`,
+  `schedule_runs` and scheduled sessions are all 0 rows; `poet` untouched.
 
 ### T21: Memory store and hybrid search   [Status: pending | Model: opus]
 - **Scope:** Port agent-bob `go/agentdb/memories.go` (992 lines) and
@@ -1694,3 +1736,12 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `apps/bob/` in the private ops repository is still what actually deploys today. Whoever does
   items 2/4/5 should finish rewriting that section (drop the `compose-projects.mjs` walkthrough
   entirely once nothing generates from `projects.yaml` anymore).
+- **T20:** the Schedules page's "Last run" (and `schedule_list`'s `last_run`) is the schedule's
+  newest run by id, so a Run now pressed on a schedule that already has a run queued records a
+  newer `skipped` row that hides the queued one: the row shows "Skipped" and Run now is enabled
+  again even though a run is still waiting (the History list shows both). Harmless (another press
+  is skipped too), but `listSchedules` could prefer an active (queued/running) run as `last_run`.
+  Also: after a restart the first tick dispatches a left-over queued run before looking at cron,
+  and `NextQueuedRun` moves its `started_at` to now, so `LastCronRun` then counts firings missed
+  during the outage from that start — they are neither caught up nor recorded as skipped (the
+  schedule was busy anyway). Not changed.
