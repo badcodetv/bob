@@ -762,7 +762,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   from git and starts a new chat" dialog text, and a stale "for sync status" doc-comment on `ui.tsx`'s
   `ago()`).
 
-### T7: Web — plain chat and read-only removed-worker chats   [Status: pending | Model: sonnet]
+### T7: Web — plain chat and read-only removed-worker chats   [Status: done | Model: sonnet]
 - **Scope:** Route `#/p/<p>/new/` (empty worker) opens a plain new chat: in `App.tsx:43-44` test
   `mode === 'new'` (not the truthiness of `id`) for the `chat` page, and at `App.tsx:103` render
   `NewChat` in plain mode when the worker is `''`. Sidebar: a "Chat" group above the workers with a
@@ -779,8 +779,33 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `cd web && npx tsc -b` → clean; manual on `./stack start`: plain chat on `dev`,
   "say hi" → reply; delete worker `helper` (T6) → its chat's composer is disabled.
 - **Depends on:** T6
-- [ ] done
-- Notes:
+- [x] done
+- Notes: Fixed `App.tsx`'s `mode === 'new'` test and the `NewChat` render condition to test
+  `mode === 'new'` directly rather than the truthiness of `newWorker` (empty for a plain chat, so
+  the old `session || newWorker` and `project && newWorker` checks both silently dropped the plain
+  route). `Chat`'s single-session GET (`api.session`) doesn't carry `worker_removed` (list-only per
+  `store.go`), so `App.tsx`'s `SessionView` now takes the loaded `workers` list too and derives
+  "removed" itself (`session.worker !== '' && workers !== null && !findWorker(...)`), passed to
+  `Chat` as a `removed` prop. Composer disabling uses `useExternalStoreRuntime`'s own `isDisabled`
+  option (it already flows into `ComposerPrimitive.Input`'s `disabled`, confirmed by reading
+  `@assistant-ui/react`'s `useComposerInputState.js`), with the required text as the composer's
+  `placeholder` (visible while disabled) plus a guard in `onNew`. Sidebar's per-chat `<ul>` was
+  factored into a `ChatList` component, reused by both the new "Chat" (plain) group and each
+  worker group, since both now need it. A plain new chat (`NewChat`'s `plain` prop) picks its own
+  engine (claude/codex) and settings via a small `PlainChatBar` in `Chat.tsx`; per the task's note,
+  **codex has no model list yet (T12), so its model is free text — `WorkerEditor.tsx`'s existing
+  `codexEfforts` precedent is followed for effort (a select), and claude keeps the existing
+  `claudeModels`/`claudeEfforts` selects**. `api.createSession` gained an `engine` parameter (the
+  server already accepted and required it for `worker: ''`, and ignores it when a worker is given,
+  per `cmd/bob/http.go`'s `createSession`). Manual check (browser UI not clicked through; API only,
+  cookie minted the way T6 did, deleted from the scratchpad after use): plain claude chat on `dev`
+  → POST `.../sessions {worker:"",engine:"claude"}`, sent "say hi", polled events → `bob.turn_done`
+  with the assistant's reply "Hi! What can I help you with today?" (no `bob.turn_failed`). Created
+  a session on worker `helper`, then `DELETE .../workers/helper?why=...`; the project's session
+  list then showed that chat with `worker_removed: true`; sending it a message returned the
+  `bob.user_message` event as usual but the turn then produced `bob.turn_failed` with
+  `{"error":"this chat's worker was deleted; start a new chat"}`, confirming the server-side half
+  T7 relies on (already true before this ticket — T7 only makes the web read it).
 
 ### T8: MCP server in the API   [Status: pending | Model: opus]
 - **Scope:** `api/internal/mcp/server.go` per Interfaces → MCP: JSON-RPC 2.0 over POST —

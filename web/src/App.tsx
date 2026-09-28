@@ -41,9 +41,9 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
   const hash = useHash()
   const [, , project, mode, id, ...rest] = hash.split('/')
   const session = mode === 's' ? id : undefined
-  const newWorker = mode === 'new' ? id : undefined
+  const newWorker = mode === 'new' ? id : undefined // '' means a plain new chat, not "no worker chosen"
   const workerRoute = mode === 'workers' ? id : undefined // undefined = the list; 'new' = create; else the worker's name
-  const page: Page = session || newWorker ? 'chat'
+  const page: Page = session || mode === 'new' ? 'chat'
     : mode === 'schedules' ? 'schedules'
     : mode === 'files' ? 'files'
     : mode === 'workers' ? 'workers'
@@ -104,11 +104,11 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
         {drawer && <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setDrawer(false)} />}
 
         <main className="min-w-0 flex-1">
-          {session ? <SessionView id={session} findWorker={findWorker} onError={guard} onChanged={loadSessions} onDeleted={() => {
+          {session ? <SessionView id={session} workers={workers} findWorker={findWorker} onError={guard} onChanged={loadSessions} onDeleted={() => {
                 loadSessions()
                 window.location.hash = `/p/${project}`
               }} />
-            : project && newWorker ? <NewChat key={newWorker} project={project} worker={findWorker(newWorker)} loading={!workers} onCreated={(s) => {
+            : project && mode === 'new' ? <NewChat key={newWorker} project={project} worker={findWorker(newWorker)} plain={!newWorker} loading={!workers} onCreated={(s) => {
                 loadSessions()
                 window.location.hash = `/p/${project}/s/${s.id}`
               }} />
@@ -154,12 +154,17 @@ function Home({ projects }: { projects: Project[] }) {
   )
 }
 
-function SessionView({ id, findWorker, onError, onChanged, onDeleted }: {
-  id: string; findWorker: (name?: string) => Worker | undefined; onError: (e: unknown) => void; onChanged: () => void; onDeleted: () => void
+function SessionView({ id, workers, findWorker, onError, onChanged, onDeleted }: {
+  id: string; workers: Worker[] | null; findWorker: (name?: string) => Worker | undefined
+  onError: (e: unknown) => void; onChanged: () => void; onDeleted: () => void
 }) {
   const [session, setSession] = useState<Session | null>(null)
   useEffect(() => { api.session(id).then(setSession).catch(onError) }, [id, onError])
-  return session ? <Chat key={session.id} session={session} worker={findWorker(session.worker)} onSent={onChanged} onDeleted={onDeleted} /> : null
+  if (!session) return null
+  // A plain chat (worker === '') is never "removed"; a worker chat is once its worker is gone
+  // from the (loaded) worker list — the single-session GET doesn't carry worker_removed itself.
+  const removed = session.worker !== '' && workers !== null && !findWorker(session.worker)
+  return <Chat key={session.id} session={session} worker={findWorker(session.worker)} removed={removed} onSent={onChanged} onDeleted={onDeleted} />
 }
 
 declare global {

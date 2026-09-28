@@ -52,8 +52,8 @@ export function ChatHeader({ worker, engine, title, workerDefaults, settings, on
   return (
     <PageBar>
       <div className="flex min-w-0 items-center gap-2.5">
-        <WorkerBadge name={worker} engine={engine} />
-        <span className="shrink-0 text-[15px] font-semibold">{worker}</span>
+        {worker && <WorkerBadge name={worker} engine={engine} />}
+        <span className="shrink-0 text-[15px] font-semibold">{worker || 'Plain chat'}</span>
         <span className="text-faint hidden text-xs sm:inline">{engineName(engine)}</span>
         {title && <span className="text-muted-foreground hidden min-w-0 truncate pl-1 text-[13px] lg:inline">{title}</span>}
       </div>

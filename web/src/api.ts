@@ -21,6 +21,8 @@ export interface Session {
   title?: string; messages?: number; last_active_at?: string
   /** The schedule that started this chat, if one did. */
   schedule?: string
+  /** Set when the session's worker has been deleted (list only): readable, but takes no more messages. */
+  worker_removed?: boolean
 }
 export interface Schedule {
   id: string; project: string; name: string; worker: string; cron: string; timezone: string; message: string
@@ -65,7 +67,7 @@ export const api = {
   projectPrompt: (project: string) => call<{ prompt: string; versions: PromptVersion[] }>('GET', `/api/projects/${project}/prompt`),
   setProjectPrompt: (project: string, prompt: string, why: string) => call<{ prompt: string }>('PUT', `/api/projects/${project}/prompt`, { prompt, why }),
   sessions: (project: string) => call<{ sessions: Session[] }>('GET', `/api/projects/${project}/sessions`).then((r) => r.sessions),
-  createSession: (project: string, worker: string, settings: Settings) => call<Session>('POST', `/api/projects/${project}/sessions`, { worker, ...settings }),
+  createSession: (project: string, worker: string, engine: string, settings: Settings) => call<Session>('POST', `/api/projects/${project}/sessions`, { worker, engine, ...settings }),
   updateSession: (id: string, settings: Settings) => call<Session>('PATCH', `/api/sessions/${id}`, settings),
   deleteSession: (id: string) => call('DELETE', `/api/sessions/${id}`),
   session: (id: string) => call<Session>('GET', `/api/sessions/${id}`),
