@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { api, type Project, type Session, type Worker } from './api'
+import { api, type Memory, type Project, type Session, type Worker } from './api'
 import { engineName, PageBar, prettyModel, when, WorkerBadge } from './ui'
 
 const RECENT = 5
@@ -16,6 +16,9 @@ export function Overview({ name, workers, sessions, onError }: {
   const [project, setProject] = useState<Project | null>(null)
   const load = useCallback(() => api.project(name).then(setProject).catch(onError), [name, onError])
   useEffect(() => { load() }, [load])
+
+  const [memories, setMemories] = useState<Memory[] | null>(null)
+  useEffect(() => { setMemories(null); api.memories(name).then(setMemories).catch(onError) }, [name, onError])
 
   // Chats nobody wrote in (left over from before chats were created on first send) aren't news.
   const talked = sessions.filter((s) => s.messages)
@@ -70,8 +73,27 @@ export function Overview({ name, workers, sessions, onError }: {
                 )}
               </Section>
 
-              <Section title="Memory">
-                <Empty>No memories yet. Once workers can save what they learn, the newest memories show here with their labels.</Empty>
+              <Section title="Memory" count={memories?.length}>
+                {!memories ? <Empty>Loading memories…</Empty>
+                  : memories.length === 0 ? <Empty>No memories yet. Once workers can save what they learn, the newest memories show here with their labels.</Empty>
+                  : (
+                    <ul>
+                      {memories.map((m) => (
+                        <li key={m.id} className="flex flex-col gap-1.5 border-t px-1 py-3.5 first:border-t-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {Object.entries(m.labels).map(([k, v]) => (
+                              <span key={k} className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[11px]">{k}={v}</span>
+                            ))}
+                          </div>
+                          <p className="text-[13.5px] whitespace-pre-wrap">{m.snippet}</p>
+                          <div className="text-faint text-[12.5px]">
+                            {m.created_by_worker || 'a chat'}, {when(m.created_at)}
+                            {m.chat_url && <> · <a href={m.chat_url.slice(m.chat_url.indexOf('#'))} className="underline underline-offset-2">view chat</a></>}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
               </Section>
             </div>
 

@@ -1582,7 +1582,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `CREATE EXTENSION IF NOT EXISTS vector` → `CREATE EXTENSION`, `./stack restart` → "ready",
   `/healthz` → `ok`, `bob` has `memories`, `004_memories.sql` recorded, vector 0.8.6.
 
-### T22: Memory MCP tools and the Overview list   [Status: pending | Model: sonnet]
+### T22: Memory MCP tools and the Overview list   [Status: done | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_memory.go`: `memory_create`, `memory_search`, `memory_get`,
   `memory_current` (Interfaces). Port descriptions from agent-bob
   `go/cmd/agentd/mcp_memory.go:132-221` and time parsing from `go/cmd/agentd/timearg.go` (RFC3339,
@@ -1594,8 +1594,34 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes.
 - **Validation:** `./stack test` → "all green"; `cd web && npx tsc -b` → clean.
 - **Depends on:** T21
-- [ ] done
-- Notes:
+- [x] done
+- Notes: implemented TDD. `api/cmd/bob/tools_memory.go`: `memory_create` (content required and
+  <= `store.MaxMemoryBytes`, labels validated, embeds with `app.embed` and fails the create if the
+  embedder fails, `created_by_worker` = `Caller.Worker`, `created_by_session` = the chat, `if_current`
+  passed to `CreateMemory`; `store.ErrNotCurrent` comes back as its own message, naming the winner),
+  `memory_search` (label_selector via `labels.Parse`, `since`/`until` as RFC3339, unix ms or `7d`/`12h`/
+  `90m`/`30s` via `parseMemTime`, `created_by_worker` with `self` resolved from `Caller.Worker` and
+  refused for a plain chat, query embedding degrades to keyword-only on embedder error; returns
+  `{results, count, note}`), `memory_get` (project-scoped, other project = "no memory with id"),
+  `memory_current` (`{found:false}` when none). Descriptions ported from agent-bob
+  `mcp_memory.go:132-221`, trimmed for what T21 dropped (no `embed:false`). Results carry `chat_url` =
+  `BOB_PUBLIC_URL + "/#/p/<project>/s/<session>"` ("" once the chat is deleted). HTTP
+  `GET /api/projects/{project}/memories?limit=20` (member; newest first, `{memories:[hit…]}`).
+  Registered in `main.go`. Web: `Memory` type and `api.memories` (`api.ts`), the Overview Memory
+  section lists them with label chips, snippet, worker and a "view chat" link. Tests
+  (`tools_memory_test.go`, `embed.Fake`): create/get, worker from session, validation, keyword+vector
+  fusion, retracts, latest_per, `self`, current, if_current conflict, two chats of one project share
+  memories while `dev` sees none (acceptance), the HTTP list, schema JSON validity, `parseMemTime`.
+  Test gotcha: `newScheduleApp` freezes the store clock, so tests that depend on order advance it
+  (`clk.set`). Bug found by the manual check and fixed: the `since`/`until` schema text contained raw
+  double quotes, making `memory_search`'s InputSchema invalid JSON; `tools/list` then answered 200 with
+  an EMPTY body (json encode failed) and the agent saw "bob MCP failed to connect" for every tool.
+  `TestMemoryToolSchemasAreValidJSON` now guards it. Validation: `go vet` clean, `gofmt -l .` empty,
+  SKIP/FAIL count `0`, `./stack test` "all green", `npx tsc -b` clean, `./stack build && ./stack
+  restart`, `/healthz` `ok`. Manual (project `dev`, plain Claude chat): the agent called
+  `memory_create` then `memory_search "manual check"` -> count 1, snippet "T22 manual check memory";
+  the memory showed in `GET /api/projects/dev/memories` with labels and `chat_url`. Test chats
+  (3) and the memory were deleted afterwards; the Overview page itself was not viewed in a browser.
 
 ### T23: Human attention — store, tool, webhook   [Status: pending | Model: sonnet]
 - **Scope:** Migration `005_attention.sql`: `attention_requests (id uuid PRIMARY KEY DEFAULT
@@ -1803,3 +1829,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   throwaway database `bob_test_1790624190133788648` on the local Postgres, created before this
   ticket's first test run (not dropped — not mine; harmless, `DROP DATABASE … WITH (FORCE)` clears
   it); and `gofmt -l` flags `api/cmd/bob/tools_drive_test.go` (pre-existing, untouched).
+- T22: `internal/mcp` `writeRPC` ignores the JSON encode error, so one tool with an invalid
+  `InputSchema` makes `tools/list` answer 200 with an empty body and takes down ALL of Bob's tools for
+  that chat (the agent reports "bob MCP failed to connect"). Not fixed (out of scope); worth a
+  registration-time `json.Valid(InputSchema)` check in `Server.Register`.

@@ -124,6 +124,7 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("DELETE /api/schedules/{schedule}", admin, a.deleteSchedule)
 	handle("POST /api/schedules/{schedule}/run", member, a.runScheduleNow)
 	handle("GET /api/schedules/{schedule}/runs", member, a.listRuns)
+	handle("GET /api/projects/{project}/memories", member, a.listMemories)
 	handle("GET /api/settings", signedIn, a.getSettings)
 	handle("PATCH /api/settings", admin, a.updateSettings)
 
