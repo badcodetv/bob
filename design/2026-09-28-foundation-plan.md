@@ -1623,7 +1623,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   the memory showed in `GET /api/projects/dev/memories` with labels and `chat_url`. Test chats
   (3) and the memory were deleted afterwards; the Overview page itself was not viewed in a browser.
 
-### T23: Human attention — store, tool, webhook   [Status: pending | Model: sonnet]
+### T23: Human attention — store, tool, webhook   [Status: done | Model: sonnet]
 - **Scope:** Migration `005_attention.sql`: `attention_requests (id uuid PRIMARY KEY DEFAULT
   gen_random_uuid(), project text NOT NULL REFERENCES projects(name), session_id uuid NOT NULL
   REFERENCES sessions(id) ON DELETE CASCADE, worker text NOT NULL, message text NOT NULL, kind text
@@ -1647,8 +1647,33 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **TDD:** yes.
 - **Validation:** `./stack test` → "all green".
 - **Depends on:** T5, T9
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) implemented TDD. Migration `005_attention.sql` as scoped; `TestFreshDatabaseIsTheBaseline`
+  now expects it and the `attention_requests` table. `store/attention.go`: `CreateAttention(session, worker,
+  message, kind)` (project taken from the session), `Attention(id)` (compares `id::text`, so a non-uuid is
+  ErrNotFound not a 500), `Attentions(project, openOnly)` (newest first, 100), `CloseAttention(id, by, reason)`
+  (idempotent: closing a closed request returns it unchanged), `CloseSessionAttention(session, by)`;
+  `Session.Attention bool` (list only, `json:"attention"`, always present). `cmd/bob/tools_attention.go`:
+  `request_human_attention` (`message` required, `notice`; description adapted with expiry removed; result
+  `{id, chat_url, note}`; `kind` ask|notice; `worker` = `Caller.Worker`), registered in `main.go`.
+  `cmd/bob/attention.go`: webhook `BOB_ATTENTION_WEBHOOK_<NAME>` (name upper-cased, `-` as `_`, read at
+  call time via `os.Getenv`; tests override `app.attentionWebhook`), POST of `{project, worker, kind, message,
+  chat_url}` with a 10 s timeout in a goroutine tracked by `app.webhooks` (failure only logged), plus
+  `GET /api/projects/{project}/attention[?state=open]` (`{attention:[...+chat_url]}`; without `state=open` the
+  latest 100 incl. closed) and `POST /api/attention/{attention}/dismiss` (member; `closed_by` = the person's
+  email). `guard` gained the `attention` path value and `storeProjectOf` the `"attention"` kind. `startTurn`
+  closes the chat's open requests as `answered` (closed_by = sender) when the sender's email does not start
+  `schedule:`; it does this after recording the message and before the turn runs. `deploy/compose.yml` api
+  service gained `BOB_ATTENTION_WEBHOOK_ENC: ${...:-}` (optional) and `deploy/env.example` documents it (T25
+  adds the wolf one). Tests: store lifecycle; tool stores a row and hits an `httptest` webhook with the exact
+  body; notice/blank message/unreachable webhook; a person's reply closes, a schedule's does not; HTTP list
+  (open vs all), dismiss, a member of another project gets 404 and the row stays open; `access_test.go` rows;
+  `TestAttentionToolSchemasAreValidJSON`. Validation: vet clean, `gofmt -l .` empty, SKIP/FAIL count 0,
+  `./stack test` "all green", compose config exit 0, `./stack build && ./stack restart`, `/healthz` ok.
+  Manual (project `dev`, plain Claude chat via a throwaway cookie-minting script, deleted): the agent called
+  the tool; `GET /api/projects/dev/attention?state=open` returned the row with a `chat_url`, the session list
+  had `attention: true`; a reply left 0 open and the row read `answered` by the sender. Dismiss and the
+  cross-project 404 are covered by tests only. The test chat was deleted (its row cascaded); no rows left.
 
 ### T24: Human attention — UI   [Status: pending | Model: sonnet]
 - **Scope:** Sidebar: a dot on a chat with `attention`, and a count next to the project name in the

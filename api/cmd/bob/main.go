@@ -129,6 +129,7 @@ func main() {
 	app.mcp.Register(app.scheduleTools()...)
 	app.mcp.Register(app.driveTools()...)
 	app.mcp.Register(app.memoryTools()...)
+	app.mcp.Register(app.attentionTools()...)
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
 

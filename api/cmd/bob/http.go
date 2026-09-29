@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,10 @@ type app struct {
 	mcp       *mcp.Server              // the tools agents call back into Bob with (POST /mcp)
 	embed     embed.Embedder           // memory embeddings (OPENAI_API_KEY); nil in tests that need none
 	now       func() time.Time
+	// attentionWebhook overrides how a project's attention webhook is found (default: the
+	// BOB_ATTENTION_WEBHOOK_<NAME> environment variable); webhooks tracks deliveries in flight.
+	attentionWebhook func(project string) string
+	webhooks         sync.WaitGroup
 
 	mu        sync.Mutex
 	turns     map[string]context.CancelFunc // session id → running turn
@@ -125,6 +130,8 @@ func (a *app) mux(stub http.HandlerFunc) http.Handler {
 	handle("POST /api/schedules/{schedule}/run", member, a.runScheduleNow)
 	handle("GET /api/schedules/{schedule}/runs", member, a.listRuns)
 	handle("GET /api/projects/{project}/memories", member, a.listMemories)
+	handle("GET /api/projects/{project}/attention", member, a.listAttention)
+	handle("POST /api/attention/{attention}/dismiss", member, a.dismissAttention)
 	handle("GET /api/settings", signedIn, a.getSettings)
 	handle("PATCH /api/settings", admin, a.updateSettings)
 
@@ -167,6 +174,8 @@ func (a *app) guard(p policy, next http.Handler) http.Handler {
 			project = a.projectOf(r.Context(), "session", r.PathValue("session"))
 		case r.PathValue("schedule") != "":
 			project = a.projectOf(r.Context(), "schedule", r.PathValue("schedule"))
+		case r.PathValue("attention") != "":
+			project = a.projectOf(r.Context(), "attention", r.PathValue("attention"))
 		default:
 			scoped = false
 		}
@@ -192,6 +201,10 @@ func (a *app) storeProjectOf(ctx context.Context, kind, id string) string {
 	case "schedule":
 		if s, err := a.store.Schedule(ctx, id); err == nil {
 			return s.Project
+		}
+	case "attention":
+		if x, err := a.store.Attention(ctx, id); err == nil {
+			return x.Project
 		}
 	}
 	return ""
@@ -482,6 +495,12 @@ func (a *app) startTurn(ctx context.Context, sess store.Session, user auth.User,
 		a.endTurn(sess.ID)
 		release()
 		return store.Event{}, nil, err
+	}
+	// A person's message answers whatever the chat was waiting on; a schedule's does not.
+	if !strings.HasPrefix(user.Email, "schedule:") {
+		if _, err := a.store.CloseSessionAttention(ctx, sess.ID, user.Email); err != nil {
+			log.Printf("session %s: closing its attention requests: %v", sess.ID, err)
+		}
 	}
 	return userEvent, func() error {
 		defer release()

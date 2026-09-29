@@ -33,6 +33,7 @@ services:
       # must start with these empty for a box with no Drive project configured yet. Required
       # only once some BOB_DRIVE_TOKEN_<NAME> is set (main.go is fatal in that case if these
       # are empty).
+      BOB_ATTENTION_WEBHOOK_ENC: ${BOB_ATTENTION_WEBHOOK_ENC:-}  # optional; empty = no webhook (T23)
       BOB_DRIVE_CLIENT_ID: ${BOB_DRIVE_CLIENT_ID:-}
       BOB_DRIVE_CLIENT_SECRET: ${BOB_DRIVE_CLIENT_SECRET:-}
       BOB_DRIVE_TOKEN_ENC: ${BOB_DRIVE_TOKEN_ENC:-}

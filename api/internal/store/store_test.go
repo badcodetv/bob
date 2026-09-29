@@ -77,7 +77,7 @@ func TestFreshDatabaseIsTheBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := collect(rows, func(r pgx.Row) (string, error) { var n string; return n, r.Scan(&n) })
-	wantMigrations := []string{"001_baseline.sql", "002_worker_labels.sql", "003_schedule_queue.sql", "004_memories.sql"}
+	wantMigrations := []string{"001_baseline.sql", "002_worker_labels.sql", "003_schedule_queue.sql", "004_memories.sql", "005_attention.sql"}
 	if err != nil || !reflect.DeepEqual(applied, wantMigrations) {
 		t.Errorf("migrations = %v, %v; want %v", applied, err, wantMigrations)
 	}
@@ -87,7 +87,7 @@ func TestFreshDatabaseIsTheBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	tables, err := collect(rows, func(r pgx.Row) (string, error) { var n string; return n, r.Scan(&n) })
-	want := fmt.Sprint([]string{"events", "memories", "project_prompt_versions", "projects", "schedule_runs", "schedules",
+	want := fmt.Sprint([]string{"attention_requests", "events", "memories", "project_prompt_versions", "projects", "schedule_runs", "schedules",
 		"sessions", "settings", "worker_versions", "workers"})
 	if err != nil || fmt.Sprint(tables) != want {
 		t.Errorf("tables = %v, %v; want %s", tables, err, want)

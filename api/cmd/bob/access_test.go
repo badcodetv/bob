@@ -18,7 +18,7 @@ func TestRouteAccess(t *testing.T) {
 		auth:   &auth.Auth{Secret: []byte("0123456789abcdef"), Allowed: people.Allowed},
 		access: people,
 		projectOf: func(_ context.Context, kind, id string) string {
-			return map[string]string{"session:wolf-chat": "wolf", "session:enc-chat": "enc", "schedule:wolf-daily": "wolf", "schedule:enc-daily": "enc"}[kind+":"+id]
+			return map[string]string{"session:wolf-chat": "wolf", "session:enc-chat": "enc", "schedule:wolf-daily": "wolf", "schedule:enc-daily": "enc", "attention:wolf-ask": "wolf", "attention:enc-ask": "enc"}[kind+":"+id]
 		},
 	}
 	h := a.mux(func(w http.ResponseWriter, r *http.Request) {})
@@ -65,6 +65,14 @@ func TestRouteAccess(t *testing.T) {
 		{tester, "GET", "/api/projects/enc/prompt", 404},
 		{tester, "PUT", "/api/projects/wolf/prompt", 200},
 		{tester, "PUT", "/api/projects/enc/prompt", 404},
+
+		{tester, "GET", "/api/projects/wolf/attention", 200},
+		{tester, "GET", "/api/projects/enc/attention", 404},
+		{tester, "POST", "/api/attention/wolf-ask/dismiss", 200},
+		{tester, "POST", "/api/attention/enc-ask/dismiss", 404},
+		{tester, "POST", "/api/attention/no-such/dismiss", 404},
+		{admin, "POST", "/api/attention/enc-ask/dismiss", 200},
+		{nobody, "POST", "/api/attention/wolf-ask/dismiss", 401},
 
 		{tester, "GET", "/api/sessions/wolf-chat", 200},
 		{tester, "GET", "/api/sessions/enc-chat", 404},
