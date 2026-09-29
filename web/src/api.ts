@@ -23,6 +23,8 @@ export interface Session {
   schedule?: string
   /** Set when the session's worker has been deleted (list only): readable, but takes no more messages. */
   worker_removed?: boolean
+  /** A person is wanted here: an open request_human_attention (list only). */
+  attention?: boolean
 }
 export interface Schedule {
   id: string; project: string; name: string; worker: string; cron: string; timezone: string; message: string
@@ -40,6 +42,11 @@ export interface Settings { model: string; effort: string }
 export interface Memory {
   id: string; labels: Record<string, string>; snippet: string; score: number
   created_by_worker: string; created_by_session: string; chat_url: string; created_at: string
+}
+/** A request for a person to look at a chat (request_human_attention); closed by a reply or a dismiss. */
+export interface Attention {
+  id: string; project: string; session_id: string; worker: string; message: string; kind: 'ask' | 'notice'
+  created_at: string; closed_at: string | null; closed_by?: string; close_reason?: 'answered' | 'dismissed'; chat_url: string
 }
 export interface BobEvent { id: number; session_id: string; engine: string; kind: string; payload: any; created_at: string }
 
@@ -85,6 +92,8 @@ export const api = {
   deleteSchedule: (id: string) => call('DELETE', `/api/schedules/${id}`),
   runSchedule: (id: string) => call<ScheduleRun>('POST', `/api/schedules/${id}/run`),
   scheduleRuns: (id: string) => call<{ runs: ScheduleRun[] }>('GET', `/api/schedules/${id}/runs`).then((r) => r.runs),
+  openAttention: (project: string) => call<{ attention: Attention[] }>('GET', `/api/projects/${project}/attention?state=open`).then((r) => r.attention),
+  dismissAttention: (id: string) => call<Attention>('POST', `/api/attention/${id}/dismiss`),
   memories: (project: string, limit = 20) => call<{ memories: Memory[] }>('GET', `/api/projects/${project}/memories?limit=${limit}`).then((r) => r.memories),
   /** A folder of the project's synced checkout; path is relative to the repository root. */
   listFiles: (project: string, path: string) => call<{ entries: FileEntry[] }>('GET', `/api/projects/${project}/files/${encodePath(path)}`).then((r) => r.entries),

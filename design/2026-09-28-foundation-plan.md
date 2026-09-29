@@ -1675,7 +1675,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   had `attention: true`; a reply left 0 open and the row read `answered` by the sender. Dismiss and the
   cross-project 404 are covered by tests only. The test chat was deleted (its row cascaded); no rows left.
 
-### T24: Human attention — UI   [Status: pending | Model: sonnet]
+### T24: Human attention — UI   [Status: done | Model: sonnet]
 - **Scope:** Sidebar: a dot on a chat with `attention`, and a count next to the project name in the
   switcher (poll `GET …/attention?state=open` every 30 s, alongside the existing 30 s tick at
   `Sidebar.tsx:25-26`). `web/src/Attention.tsx`: a "Needs you" section on the Overview listing open
@@ -1687,8 +1687,28 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `cd web && npx tsc -b` → clean; manual on `./stack start`: ask a dev chat to call
   `request_human_attention`; see the dot and the Overview entry; reply; both clear.
 - **Depends on:** T23
-- [ ] done
-- Notes:
+- [x] done
+- Notes: (executor) `api.ts`: `Attention` type, `Session.attention?`, `api.openAttention` and
+  `api.dismissAttention`. `App.tsx` owns the open list (`attention` state): loaded on project change and
+  re-polled every 30 s together with the session list (so the chat dots update; sessions were not polled
+  before); it passes the count to `Sidebar` and the list plus an `onAttentionChanged` (reloads both) to
+  `Overview`. `Sidebar.tsx`: red count pill next to the project name in the switcher trigger (current
+  project only, not other projects in the menu), red dot on a chat row with `attention`. New
+  `web/src/Attention.tsx` `NeedsYou` section (message, worker or "a chat", notice marker, age, "Open chat"
+  link, Dismiss button); `Overview.tsx` shows it at the top of the left column only when there are open
+  requests. Replying in a chat clears the badge on the next 30 s poll (no immediate refresh on send).
+  Validation: `npx tsc -b` clean, `./stack test` "all green", `./stack build && ./stack restart`,
+  `/healthz` ok. Manual: NO browser tool was available, so the UI was not viewed; verified through the
+  endpoints the UI calls (throwaway cookie minter, deleted): a plain Claude chat in `dev` called
+  `request_human_attention`; `?state=open` returned the row and the session list had `attention: true`;
+  a reply left 0 open; a second request was dismissed via `POST /api/attention/{id}/dismiss`
+  (`close_reason` dismissed, `closed_by` set) and open went to 0. Test chats deleted, 0 attention rows left.
+  Browser check (later, headless Chromium via a throwaway Playwright script, since deleted; cookie minted in
+  the script): on `#/p/dev` with one open request the sidebar showed the red dot on the chat row, the
+  count pill "1" by the project name and the "Needs you" section on the Overview (screenshot
+  `t24-before.png`); after a reply and a reload all three were gone (`t24-after.png`); a second request
+  appeared on the 30 s poll without a reload, and clicking Dismiss in the UI cleared the section and
+  pill with 0 open in the API. No UI fixes were needed. Test chat deleted, 0 rows left.
 
 ### T25: Wolf goes live   [Status: pending | Model: sonnet]
 - **Scope:** `deploy/compose.yml`: add `bob-project-wolf` (`BOB_PROJECT_NAME: wolf`,
@@ -1858,3 +1878,4 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `InputSchema` makes `tools/list` answer 200 with an empty body and takes down ALL of Bob's tools for
   that chat (the agent reports "bob MCP failed to connect"). Not fixed (out of scope); worth a
   registration-time `json.Valid(InputSchema)` check in `Server.Register`.
+- (orchestrator, T24 screenshots) Overview "Recent conversations": a plain chat (no worker) shows its subtitle as ", 1 message" — the worker name is empty and the comma stays. Cosmetic; pre-dates T24.

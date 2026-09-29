@@ -73,7 +73,7 @@ function matchesSelector(labels: Record<string, string>, reqs: Requirement[]): b
   })
 }
 
-export function Sidebar({ email, projects, project, workers, sessions, currentSession, currentWorker, page, onSignOut }: {
+export function Sidebar({ email, projects, project, workers, sessions, currentSession, currentWorker, page, attention, onSignOut }: {
   email: string
   projects: Project[]
   project?: string
@@ -82,6 +82,8 @@ export function Sidebar({ email, projects, project, workers, sessions, currentSe
   currentSession?: string
   currentWorker?: string
   page: Page
+  /** How many open requests for a person the project has. */
+  attention: number
   onSignOut: () => void
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -120,6 +122,10 @@ export function Sidebar({ email, projects, project, workers, sessions, currentSe
         <Menu label="Switch project" triggerClassName="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-lg font-semibold tracking-tight"
           trigger={<>
             <span className="min-w-0 flex-1 truncate">{project ?? 'Projects'}</span>
+            {attention > 0 && (
+              <span title={`${attention} need${attention === 1 ? 's' : ''} you`} aria-label={`${attention} chats need you`}
+                className="bg-destructive text-destructive-foreground rounded-full px-1.5 py-px text-[11px] leading-4 font-semibold tabular-nums">{attention}</span>
+            )}
             <ChevronDownIcon className="text-faint size-4" />
           </>}>
           {projects.map((p) => (
@@ -220,6 +226,7 @@ function ChatList({ groupKey, chats, project, currentSession, expanded, setExpan
             {s.schedule
               ? <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate" title={s.title}><ClockIcon className="text-faint size-3 shrink-0" />{s.schedule}</span>
               : <span className={cn('min-w-0 flex-1 truncate', !s.title && 'italic')}>{s.title || 'Empty chat'}</span>}
+            {s.attention && <span title="Needs you" aria-label="Needs you" className="bg-destructive size-2 shrink-0 self-center rounded-full" />}
             <time className="text-faint shrink-0 text-[11.5px] tabular-nums">{when(s.last_active_at ?? s.created_at)}</time>
           </a>
         </li>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, Unauthorized, type Config, type Project, type Session, type Worker } from './api'
+import { api, Unauthorized, type Attention, type Config, type Project, type Session, type Worker } from './api'
 import { Chat, NewChat } from './Chat'
 import { Overview } from './Overview'
 import { ProjectPrompt } from './ProjectPrompt'
@@ -74,13 +74,28 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
     if (project) api.sessions(project).then(setSessions).catch(guard)
   }, [project, guard])
 
+  // Open requests for a person (request_human_attention). Agents raise them through MCP, which
+  // doesn't push to the browser, so poll: the sidebar dot and count, and the Overview's list.
+  const [attention, setAttention] = useState<Attention[]>([])
+  const loadAttention = useCallback(() => {
+    if (project) api.openAttention(project).then(setAttention).catch(() => {})
+  }, [project])
+
   useEffect(() => {
     setWorkers(null)
     setSessions([])
+    setAttention([])
     if (!project) return
     loadWorkers()
     loadSessions()
-  }, [project, guard, loadWorkers, loadSessions])
+    loadAttention()
+  }, [project, guard, loadWorkers, loadSessions, loadAttention])
+
+  useEffect(() => {
+    if (!project) return
+    const t = setInterval(() => { loadAttention(); loadSessions() }, 30_000)
+    return () => clearInterval(t)
+  }, [project, loadAttention, loadSessions])
 
   // Workers an agent creates through MCP don't push to the browser: catch up whenever the tab
   // regains focus, so a worker made elsewhere shows up without a reload.
@@ -98,7 +113,7 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
           'fixed inset-y-0 left-0 z-40 w-[min(300px,86vw)] -translate-x-full transition-transform duration-200 md:static md:z-auto md:w-68 md:translate-x-0 md:transition-none',
           drawer && 'translate-x-0',
         )}>
-          <Sidebar email={email} projects={projects} project={project} workers={workers} sessions={sessions}
+          <Sidebar email={email} projects={projects} project={project} workers={workers} sessions={sessions} attention={attention.length}
             currentSession={session} currentWorker={newWorker} page={page} onSignOut={() => api.logout().then(onSignedOut)} />
         </div>
         {drawer && <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setDrawer(false)} />}
@@ -122,7 +137,8 @@ function Signed({ email, admin, onSignedOut }: { email: string; admin: boolean; 
                       onDeleted={() => { loadWorkers(); loadSessions(); window.location.hash = `/p/${project}/workers` }} onError={guard} />
                   : <Workers key={project} project={project} workers={workers} onError={guard} />
               )
-            : project ? <Overview key={project} name={project} workers={workers} sessions={sessions} onError={guard} />
+            : project ? <Overview key={project} name={project} workers={workers} sessions={sessions} attention={attention}
+                onAttentionChanged={() => { loadAttention(); loadSessions() }} onError={guard} />
             : <Home projects={projects} />}
         </main>
       </div>

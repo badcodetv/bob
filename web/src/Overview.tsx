@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { api, type Memory, type Project, type Session, type Worker } from './api'
+import { api, type Attention as AttentionRequest, type Memory, type Project, type Session, type Worker } from './api'
+import { NeedsYou } from './Attention'
 import { engineName, PageBar, prettyModel, when, WorkerBadge } from './ui'
 
 const RECENT = 5
 
 /** A project's home: what it is, what's been happening in it, and who works in it. */
-export function Overview({ name, workers, sessions, onError }: {
+export function Overview({ name, workers, sessions, attention, onAttentionChanged, onError }: {
   name: string
   workers: Worker[] | null
   sessions: Session[]
+  attention: AttentionRequest[]
+  onAttentionChanged: () => void
   onError: (e: unknown) => void
 }) {
   const [project, setProject] = useState<Project | null>(null)
@@ -46,6 +49,8 @@ export function Overview({ name, workers, sessions, onError }: {
 
           <div className="grid items-start gap-8 md:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] md:gap-12">
             <div className="flex min-w-0 flex-col gap-9">
+              {attention.length > 0 && <NeedsYou project={name} requests={attention} onChanged={onAttentionChanged} onError={onError} />}
+
               <Section title="Recent conversations" count={talked.length}>
                 {recent.length ? (
                   <ul>
