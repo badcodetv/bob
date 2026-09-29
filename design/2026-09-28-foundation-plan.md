@@ -1289,6 +1289,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   <scratchpad>/dummy.env -f deploy/compose.yml config -q` → exit 0, both with the three
   `BOB_DRIVE_*` dummy vars set and with them absent (confirming the `${VAR:-}` default); did not
   touch `api/`, `runtime/`, `web/`, or run `./stack build/restart/test`.
+  (orchestrator, 2026-09-29) Item 2 prepared: `.env.box` written (mode 600, gitignored) from the ops copy minus `BOB_RUNTIME_KEY`/`BOB_PROJECTS_FILE`/`FRED_API_KEY`, plus `BOB_PUBLIC_URL`, a new `BOB_RUNTIME_TOKEN_ENC`, and `OPENAI_API_KEY` (required since T21). Still empty, for Kai: `GITHUB_TOKEN_ENC`, `BOB_DRIVE_CLIENT_ID`, `BOB_DRIVE_CLIENT_SECRET`, `BOB_DRIVE_TOKEN_ENC`; Richard not yet in `BOB_PROJECT_MAP`. `docker compose config` with it fails only on `GITHUB_TOKEN_ENC`. Box reachable over ssh; old `bob-api-1` + `bob-project-wolf` still running (cutover not started).
 
 ### Part 2 — marketing
 
