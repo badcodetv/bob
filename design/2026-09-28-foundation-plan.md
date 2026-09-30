@@ -1713,7 +1713,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   appeared on the 30 s poll without a reload, and clicking Dismiss in the UI cleared the section and
   pill with 0 open in the API. No UI fixes were needed. Test chat deleted, 0 rows left.
 
-### T25: Wolf goes live   [Status: pending | Model: sonnet]
+### T25: Wolf goes live   [Status: in progress — deployed at 2e4dfc6; Wolf workers + live check pending | Model: sonnet]
 - **Scope:** `deploy/compose.yml`: add `bob-project-wolf` (`BOB_PROJECT_NAME: wolf`,
   `BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_WOLF:?}`, `GITHUB_TOKEN: ${GITHUB_TOKEN_WOLF:?}` scoped
   to `badcodetv/wolf`, `FRED_API_KEY: ${FRED_API_KEY:?}`); `BOB_PROJECTS: enc,marketing,wolf`;
@@ -1736,6 +1736,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Depends on:** T17, T20, T22, T24
 - [ ] done
 - Notes:
+  (orchestrator, 2026-09-30) Deployed `2e4dfc6`: api serves `enc, marketing, wolf`; `bob-project-wolf` has `FRED_API_KEY` + `GITHUB_TOKEN`; vector extension already created at the T16 cutover (ops README records it). Deployed only after checking no chat events in the previous 15 min. Gap found: `badcodetv/wolf` was built for the old Bob (`bob/bob.md` project prompt with `files_root: site`, workers in `bob/workers/{wolf,researcher,critic}.md`, skill in `bob/skills/wolf`); the new Bob keeps workers/prompt in Postgres and skills in `/project/skills`, so they must be loaded once (Kai to choose: import those three vs the plan's interviewer design).
 
 ### T26: End-to-end verification and docs   [Status: in progress — docs done; clean-slate run + live checks wait on T25 | Model: sonnet]
 - **Scope:** On the laptop from a clean state (Kai's go-ahead): `echo y | ./stack clean`;
