@@ -94,7 +94,16 @@ repositories one level below it (`/project/work/<repo>`) and commits and pushes 
 other chats may be changing files there at the same time. Git reaches `github.com` with
 `GITHUB_TOKEN`, read from the environment by a credential helper each time git asks — the token is
 never written to a file, and never sent to other hosts. To push, the token needs **Contents: read
-and write** on the repository (a fine-grained token, one per project on the box).
+and write** on the repository (a fine-grained token, one per project on the box). Clone with
+`https://github.com/<owner>/<repo>.git` URLs: the helper answers only for https, not ssh.
+
+Because the checkout is shared, push with **`bob-push [branch]`** (on the image's PATH;
+`runtime/bin/bob-push`): it runs `git pull --rebase --autostash`, then `git push`, and retries a few
+times when the push is rejected because someone pushed first. Other chats' uncommitted changes are
+stashed around the rebase and put back. On a rebase conflict it aborts the rebase — the commits are
+left as they were — names the conflicting files and exits 1 (2 for misuse, 3 when the push itself
+fails). Stage only the paths you changed (`git add <paths>`, not `git add -A`), so a commit does not
+carry another chat's half-finished work.
 
 A turn knows who it is for. Its tools see `BOB_USER_EMAIL` and `BOB_USER_NAME` (the signed-in
 person; a scheduled turn has `schedule:<schedule id>` and the schedule's name), and a commit made

@@ -1748,6 +1748,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - [ ] done
 - Notes:
   (orchestrator, 2026-09-30) Deployed `2e4dfc6`: api serves `enc, marketing, wolf`; `bob-project-wolf` has `FRED_API_KEY` + `GITHUB_TOKEN`; vector extension already created at the T16 cutover (ops README records it). Deployed only after checking no chat events in the previous 15 min. Gap found: `badcodetv/wolf` was built for the old Bob (`bob/bob.md` project prompt with `files_root: site`, workers in `bob/workers/{wolf,researcher,critic}.md`, skill in `bob/skills/wolf`); the new Bob keeps workers/prompt in Postgres and skills in `/project/skills`, so they must be loaded once (Kai to choose: import those three vs the plan's interviewer design).
+  (executor, 2026-09-30) Kai chose the interviewer design. Bob (uncommitted): `runtime/bin/bob-push` on the image's PATH (`git pull --rebase --autostash`, `git push`, retries when rejected; a conflict aborts the rebase, names the files, exits 1), tested by `runtime/src/bobpush.test.ts` (7 cases, in `./stack test`); README documents it and https clone URLs. **T26's validation grep lists `bob-push` as stale and now matches these on purpose — drop it from that grep.** Wolf (2 local commits, not pushed): `bob/workers/interviewer.md` (creates worker + schedule `h-<slug>` at go-live, daily `0 6 * * *` UTC; deletes the schedule and labels the worker `retired=true` at a verdict/archive), `bob/workers/hypothesis-template.md`, critic kept (`critic-weekly`), researcher retired, `bob/project-prompt.md`, `bob/setup.md` (the idempotent bootstrap message); checkout is `/project/work/wolf`; `wolf daily <slug>`; slugs ≤ 39 chars so `h-<slug>` fits Bob's 41. Rehearsed on laptop `dev` against a bare remote in the container (no GitHub push): every acceptance point observed (plain-chat setup, `h-<slug>` with `kind=hypothesis`, two Run-now runs back to back, run → note/render/commit/bob-push/memory, `memory_search` from another chat, notice → webhook + attention list); setup rerun on Codex changed nothing. Rehearsal fully cleaned up. Left for Kai: push wolf, commit Bob + publish/deploy the runtime (for `bob-push`), set wolf's project prompt, send `bob/setup.md` in a wolf plain chat, set `BOB_ATTENTION_WEBHOOK_WOLF` if wanted.
 
 ### T26: End-to-end verification and docs   [Status: in progress — docs done; clean-slate run + live checks wait on T25 | Model: sonnet]
 - **Scope:** On the laptop from a clean state (Kai's go-ahead): `echo y | ./stack clean`;
@@ -1761,7 +1762,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Acceptance criteria:** all gates green; no stale references.
 - **TDD:** no.
 - **Validation:** `./stack test` → "all green"; `cd web && npm run build` → succeeds;
-  `grep -rn "projects.yaml\|BOB_RUNTIME_KEY\|bob-push\|sync.sh\|bob\.md\|BOB_REPO_\|import-agent-bob-env" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=design --exclude-dir=.stack --exclude-dir=.git .`
+  `grep -rn "projects.yaml\|BOB_RUNTIME_KEY\|sync.sh\|bob\.md\|BOB_REPO_\|import-agent-bob-env" --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=design --exclude-dir=.stack --exclude-dir=.git .`
   → no matches; the three live checks pass.
 - **Depends on:** T25
 - [ ] done

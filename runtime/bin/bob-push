@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# bob-push [branch] — share the current branch's commits: pull with rebase, then push, retrying
+# when someone else pushed first. Every chat in a project shares one checkout in /project/work, so
+# the remote moves under you; this is the one safe way to push from there.
+#
+#   branch   the branch to push (default: the current one). You must be on it.
+#
+# Uncommitted changes (yours or another chat's) are stashed around the rebase and put back.
+# On a rebase conflict the rebase is aborted — the checkout is left as it was before — and the
+# conflicting files are named. Exit: 0 pushed, 1 conflict, 2 usage/not a repository,
+# 3 push failed (after retries, or for another reason such as auth).
+set -uo pipefail
+
+ATTEMPTS="${BOB_PUSH_ATTEMPTS:-5}"
+REMOTE="${BOB_PUSH_REMOTE:-origin}"
+
+say() { printf 'bob-push: %s\n' "$*" >&2; }
+
+if [ "$#" -gt 1 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  echo "usage: bob-push [branch]" >&2
+  exit 2
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  say "not inside a git repository ($(pwd))"
+  exit 2
+fi
+
+current=$(git symbolic-ref --quiet --short HEAD) || { say "HEAD is detached; check out a branch first"; exit 2; }
+branch="${1:-$current}"
+if [ "$branch" != "$current" ]; then
+  say "you are on '$current', not '$branch'; check out '$branch' first"
+  exit 2
+fi
+
+in_rebase() {
+  [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]
+}
+
+if in_rebase; then
+  say "a rebase is already in progress in $(git rev-parse --show-toplevel); finish or abort it first"
+  exit 2
+fi
+
+remote_has_branch() {
+  git ls-remote --exit-code --heads "$REMOTE" "$branch" >/dev/null 2>&1
+}
+
+attempt=1
+while :; do
+  if remote_has_branch; then
+    if ! out=$(git pull --rebase --autostash "$REMOTE" "$branch" 2>&1); then
+      conflicts=$(git diff --name-only --diff-filter=U 2>/dev/null)
+      if in_rebase; then git rebase --abort >/dev/null 2>&1; fi
+      if [ -n "$conflicts" ]; then
+        say "rebase onto $REMOTE/$branch conflicted; aborted, your commits are unchanged. Conflicting files:"
+        printf '%s\n' "$conflicts" | sed 's/^/  /' >&2
+        exit 1
+      fi
+      say "pull --rebase from $REMOTE/$branch failed:"
+      printf '%s\n' "$out" | sed 's/^/  /' >&2
+      exit 3
+    fi
+  fi
+
+  if out=$(git push "$REMOTE" "HEAD:refs/heads/$branch" 2>&1); then
+    say "pushed $branch to $REMOTE ($(git rev-parse --short HEAD))"
+    exit 0
+  fi
+
+  # Rejected because the remote moved on (someone pushed first)? Then try again; anything else
+  # (auth, network, a protected branch) will not get better by retrying.
+  if printf '%s' "$out" | grep -qE 'rejected|non-fast-forward|fetch first|stale info|cannot lock ref'; then
+    if [ "$attempt" -ge "$ATTEMPTS" ]; then
+      say "push to $REMOTE/$branch was still rejected after $ATTEMPTS attempts:"
+      printf '%s\n' "$out" | sed 's/^/  /' >&2
+      exit 3
+    fi
+    attempt=$((attempt + 1))
+    say "push rejected (someone pushed first); pulling and trying again ($attempt/$ATTEMPTS)"
+    sleep "$(awk -v a="$attempt" 'BEGIN { srand(); printf "%.1f", a * 0.5 + rand() }')"
+    continue
+  fi
+  say "push to $REMOTE/$branch failed:"
+  printf '%s\n' "$out" | sed 's/^/  /' >&2
+  exit 3
+done

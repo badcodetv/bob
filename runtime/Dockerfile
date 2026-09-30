@@ -20,6 +20,8 @@ RUN ln -s /app/node_modules/.bin/codex /usr/local/bin/codex
 # The token is never written to a file — not here, not on the project volume.
 RUN git config --system credential.https://github.com.helper \
       '!f() { [ "$1" = get ] && [ -n "${GITHUB_TOKEN:-}" ] && printf "username=x-access-token\npassword=%s\n" "$GITHUB_TOKEN"; }; f'
+# bob-push: pull --rebase then push, retrying when someone pushed first (chats share one checkout).
+COPY --chmod=755 bin/bob-push /usr/local/bin/bob-push
 RUN mkdir -p /project && chown node:node /project
 ENV BOB_PROJECT_DIR=/project \
     CLAUDE_CONFIG_DIR=/project/.bob/claude \
