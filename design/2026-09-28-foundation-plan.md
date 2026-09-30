@@ -1208,7 +1208,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   restart` → `curl http://127.0.0.1:8070/healthz` → `ok`; `curl -o /dev/null -w '%{http_code}'
   http://127.0.0.1:8070/drive/fetch/garbage` → `403`.
 
-### T16: `./stack deploy`, secrets moved, ENC goes live   [Status: pending | Model: sonnet]
+### T16: `./stack deploy`, secrets moved, ENC goes live   [Status: done | Model: sonnet]
 - **Scope:**
   1. **`./stack deploy <tag>`** (new case in `stack`; `BOX=${BOX:-ubuntu@box.badcode.tv}`):
      refuse without a tag, and refuse unless `git cat-file -e <tag>:deploy/compose.yml` succeeds
@@ -1257,7 +1257,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `git status --ignored --short .env.box` → `!! .env.box`; `ls /home/kai/projects/badcode/ops/apps/bob`
   → no such directory; the live check, observed by Kai.
 - **Depends on:** T10, T12, T13, T15
-- [ ] done
+- [x] done
 - Notes: (executor, scope items 1 and 3 only) Items 1 and 3 done; items 2 (secrets move), 4 (box
   cutover) and 5 (ops repo) are pending — not touched, per this run's instructions (no ssh to the
   box, no `.env.box` created, no tagged `./stack deploy`).
@@ -1291,10 +1291,11 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   touch `api/`, `runtime/`, `web/`, or run `./stack build/restart/test`.
   (orchestrator, 2026-09-29) Item 2 prepared: `.env.box` written (mode 600, gitignored) from the ops copy minus `BOB_RUNTIME_KEY`/`BOB_PROJECTS_FILE`/`FRED_API_KEY`, plus `BOB_PUBLIC_URL`, a new `BOB_RUNTIME_TOKEN_ENC`, and `OPENAI_API_KEY` (required since T21). Still empty, for Kai: `GITHUB_TOKEN_ENC`, `BOB_DRIVE_CLIENT_ID`, `BOB_DRIVE_CLIENT_SECRET`, `BOB_DRIVE_TOKEN_ENC`; Richard not yet in `BOB_PROJECT_MAP`. `docker compose config` with it fails only on `GITHUB_TOKEN_ENC`. Box reachable over ssh; old `bob-api-1` + `bob-project-wolf` still running (cutover not started).
   (orchestrator, 2026-09-30) Cutover done (items 2 and 4): Kai filled `.env.box` (GitHub tokens for enc/marketing/wolf, Drive client, Richard + Jack in `BOB_PROJECT_MAP`); `BOB_DRIVE_TOKEN_ENC` reuses Kai's own Drive token (`kaiyadavenport@gmail.com`, Kai's choice — ENC agents see what that account sees). Backup first: `/home/ubuntu/bob-cutover-backup-20260930/` on the box (old `bob` db dump, 8 near-empty tables; `bob-project-wolf` volume tar). Then `sudo app bob stop`, removed `bob-project-wolf` container + volume, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` as `app_bob`, and `CREATE EXTENSION vector` as postgres (needed now, not at T25: T21 makes the API refuse to boot without it). `./stack publish` → `3a21a19`; `./stack deploy 3a21a19` → healthy; migrations 001–005 applied; serving `enc`; public site 200, `/api/me` 401. Box still has old ops hook files in `/srv/apps/bob` (`gen-projects.sh`, `pre-deploy.sh`, `post-deploy.sh`) — unused by `app`/`./stack deploy`, safe to delete with item 5. Remaining: Kai's box codex login, the ENC live check, then item 5 (ops repo).
+  (orchestrator, 2026-09-30) Done. Kai ran the box codex login (survives a container restart and a recreate — tested) and the ENC live check passed: Codex plain chat created `librarian`; librarian listed Drive, read a Doc, cloned `emperorsnewcoin/bob`, wrote the Doc as markdown, committed and pushed. Item 5: ops commit `7144379` removed `apps/bob/`, README's Bob row rewritten; `secrets/bob/.env{,.local}` deleted (untracked; `FRED_API_KEY` copied into `.env.box` first for T25); ops `secrets/README.md` note added (git-ignored there). Validation: `bash -n stack` ok; `./stack deploy` without a tag refuses; box healthz `ok`; `.env.box` ignored; `ops/apps/bob` gone.
 
 ### Part 2 — marketing
 
-### T17: Marketing project   [Status: pending | Model: sonnet]
+### T17: Marketing project   [Status: in progress — deployed at 99decbb; live check waits on Kai | Model: sonnet]
 - **Scope:** `deploy/compose.yml`: add `bob-project-marketing` (as enc: `BOB_PROJECT_NAME:
   marketing`, `BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_MARKETING:?}`,
   `GITHUB_TOKEN: ${GITHUB_TOKEN_MARKETING:?}`), set `BOB_PROJECTS: enc,marketing` and add

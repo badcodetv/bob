@@ -340,13 +340,13 @@ socket**.
 the compose file names, including `OPENAI_API_KEY` (the API will not start without it) and, per
 project, `BOB_RUNTIME_TOKEN_<NAME>` and `GITHUB_TOKEN_<NAME>`.
 
-> **Status:** production still runs the old Bob from `apps/bob/` in the private ops repository.
-> `.env.box` is prepared but has empty values Kai must supply (`GITHUB_TOKEN_ENC`,
-> `BOB_DRIVE_CLIENT_ID`, `BOB_DRIVE_CLIENT_SECRET`, `BOB_DRIVE_TOKEN_ENC`), and the box cutover
-> (stop the old API and `bob-project-wolf`, reset the `bob` schema, `CREATE EXTENSION vector` as
-> the superuser, publish, deploy, Codex login) and retiring `apps/bob/` in the ops repository
-> (T16 items 2, 4 and 5) have **not** happened. Until they do, none of the deploy steps above
-> have been run against the box.
+> **Status:** production runs this repository's Bob, deployed with `./stack deploy` since the
+> 2026-09-30 cutover (the old API and `bob-project-wolf` stopped, the `bob` schema reset,
+> `CREATE EXTENSION vector` run as the superuser). The ops repository no longer holds `apps/bob/`;
+> it still provides the database, role, `box-db` network, Caddy route and `app` helper. Codex is
+> logged in per project on the box with
+> `sudo docker exec -it bob-project-<name> codex login --device-auth`; the login lives on the
+> project's volume, so restarts and redeploys keep it.
 
 A project's volume is declared `external`, so:
 
