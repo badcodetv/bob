@@ -919,7 +919,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `/versions` shows exactly one version, `action: "create"`, `changed_by:
   "kaiyadavenport@gmail.com"`, `why: "test of worker_create"`.
 
-### T11: Codex driver in the runtime   [Status: in progress — code committed; live check waits on Kai's codex login | Model: opus]
+### T11: Codex driver in the runtime   [Status: done | Model: opus]
 - **Scope:** Add `@openai/codex-sdk` to `runtime/package.json`. In `runtime/Dockerfile` put the
   bundled CLI on the PATH: `RUN ln -s /app/node_modules/.bin/codex /usr/local/bin/codex`.
   **First verify** against the installed SDK's types and Codex docs, recording each answer in
@@ -945,7 +945,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `./stack build && ./stack restart`; `docker exec bob-project-dev codex --version` → prints a
   version; Kai runs `docker exec -it bob-project-dev codex login --device-auth`; T12's manual check.
 - **Depends on:** T9
-- [ ] done
+- [x] done
 - Notes: (executor) SDK verification against `@openai/codex-sdk` 0.158.0 (`dist/index.d.ts`,
   `dist/index.js`, README) and the bundled `codex-cli 0.158.0` (`--help`, and probes in a throwaway
   `CODEX_HOME`): **(a)** yes — `new Codex({ config })`; the SDK flattens the object to dotted
@@ -983,7 +983,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `docker exec -it bob-project-dev codex login --device-auth`; the resume/streaming acceptance
   criteria are checked by T12's manual check after that.
 
-### T12: Codex in the API and the web   [Status: in progress — code committed; live check waits on Kai's codex login | Model: sonnet]
+  (orchestrator, 2026-09-30) Live check passed on laptop `dev` after Kai's codex login and Drive token: Codex chat ran `ls /project` + `bob_whoami` (events command_execution, mcp_tool_call), resume kept the thread id, UI rendered both turns before and after reload (headless Chromium screenshot); Codex listed the `haiku` skill; drive_list/drive_read (Doc → text/markdown)/drive_fetch (15 KB file, 200) and tampered tokens → 403. Also confirmed on the box by Kai's ENC check. `curl` was missing from the runtime image (T15's check assumes it) — added to `runtime/Dockerfile`.
+
+### T12: Codex in the API and the web   [Status: done | Model: sonnet]
 - **Scope:** `api/internal/engines/engines.go`: for `codex`, `kind` = event `type`; ephemeral when
   the type is `item.started` or `item.updated`. `web/src/engines/codex.ts`:
   `codexMessages(events, live)` → assistant-ui messages: `agent_message` → text; `reasoning` →
@@ -1002,7 +1004,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `./stack test` → "all green"; `cd web && npx tsc -b` → clean; manual: Codex plain
   chat on `dev`, "run `ls /project` and call bob_whoami" → both shown, and still shown after reload.
 - **Depends on:** T7, T11
-- [ ] done
+- [x] done
 - Notes: (executor) `engines.go`: `codex`'s `kind` is the event `type` (no `subtype` in Codex's
   events); ephemeral (streamed live, not stored) for `item.started`/`item.updated` — the in-progress
   snapshot of a running item — and stored for everything else, `item.completed` in particular.
@@ -1044,7 +1046,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   was not run: Codex is not logged in yet in `bob-project-dev` (T11 stopped there for Kai's
   `codex login --device-auth`), and logging in was out of scope here.
 
-### T13: Skills folder for both harnesses   [Status: in progress — code committed, Claude half checked; Codex half waits on Kai's codex login | Model: sonnet]
+  (orchestrator, 2026-09-30) Live check passed on laptop `dev` after Kai's codex login and Drive token: Codex chat ran `ls /project` + `bob_whoami` (events command_execution, mcp_tool_call), resume kept the thread id, UI rendered both turns before and after reload (headless Chromium screenshot); Codex listed the `haiku` skill; drive_list/drive_read (Doc → text/markdown)/drive_fetch (15 KB file, 200) and tampered tokens → 403. Also confirmed on the box by Kai's ENC check. `curl` was missing from the runtime image (T15's check assumes it) — added to `runtime/Dockerfile`.
+
+### T13: Skills folder for both harnesses   [Status: done | Model: sonnet]
 - **Scope:** `runtime/src/skills.ts`: `linkSkills(skillsDir: string, targets: string[])` makes each
   target a symlink to `skillsDir` (replaces a stale symlink; leaves a real directory alone and logs
   it). `server.ts` calls it at startup with `[$CLAUDE_CONFIG_DIR/skills, $CODEX_HOME/skills]`.
@@ -1058,7 +1062,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `docker exec bob-project-dev sh -c 'mkdir -p /project/skills/haiku && printf -- "---\nname: haiku\ndescription: Write a haiku\n---\nWrite one haiku.\n" > /project/skills/haiku/SKILL.md'`,
   `./stack build && ./stack restart`, ask each engine "what skills do you have?" → both name `haiku`.
 - **Depends on:** T11
-- [ ] done
+- [x] done
 - Notes: (executor) Confirmed `$CLAUDE_CONFIG_DIR`/`$CODEX_HOME` from `runtime/Dockerfile:25-26`
   (`/project/.bob/claude`, `/project/.bob/codex`); `entrypoint.sh` already `mkdir -p`s both plus
   `$P/skills` before starting the server, so `linkSkills`'s own `mkdirSync(dirname(target), {
@@ -1091,7 +1095,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   confirmed to exist and resolve correctly, so once Kai runs `docker exec -it bob-project-dev codex
   login --device-auth`, a Codex chat asking the same question should be the only remaining check.
 
-### T14: Drive client, OAuth client and token script   [Status: in progress — code committed; waits on Kai's OAuth client + drive-token run | Model: sonnet]
+  (orchestrator, 2026-09-30) Live check passed on laptop `dev` after Kai's codex login and Drive token: Codex chat ran `ls /project` + `bob_whoami` (events command_execution, mcp_tool_call), resume kept the thread id, UI rendered both turns before and after reload (headless Chromium screenshot); Codex listed the `haiku` skill; drive_list/drive_read (Doc → text/markdown)/drive_fetch (15 KB file, 200) and tampered tokens → 403. Also confirmed on the box by Kai's ENC check. `curl` was missing from the runtime image (T15's check assumes it) — added to `runtime/Dockerfile`.
+
+### T14: Drive client, OAuth client and token script   [Status: done | Model: sonnet]
 - **Scope:** **Human step (Kai)**: in a Google Cloud project, create an OAuth client of type
   "Desktop app", enable the Drive API, set the OAuth consent screen's publishing status to
   **"In production"** (an unverified app is fine for under 100 users; people click through the
@@ -1116,7 +1122,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `./stack test` → "all green"; manual: `node scripts/drive-token` prints a refresh
   token for Kai's test account; put it in `.env` as `BOB_DRIVE_TOKEN_DEV`.
 - **Depends on:** T1
-- [ ] done
+- [x] done
 - Notes:
   `golang.org/x/oauth2@v0.30.0` and `google.golang.org/api/drive/v3@v0.244.0` added by `go get`
   (letting it pick `@latest` bumped `go.mod`'s `go` directive to 1.26.0, which `golang:1.25-bookworm`
@@ -1151,7 +1157,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   -v | grep -cE -- "--- (SKIP|FAIL)"` → `0`; `./stack build && ./stack restart` →
   `curl http://127.0.0.1:8070/healthz` → `200`.
 
-### T15: Drive MCP tools and signed fetch   [Status: in progress — code committed; live check waits on a Drive token (T14) | Model: sonnet]
+  (orchestrator, 2026-09-30) Live check passed on laptop `dev` after Kai's codex login and Drive token: Codex chat ran `ls /project` + `bob_whoami` (events command_execution, mcp_tool_call), resume kept the thread id, UI rendered both turns before and after reload (headless Chromium screenshot); Codex listed the `haiku` skill; drive_list/drive_read (Doc → text/markdown)/drive_fetch (15 KB file, 200) and tampered tokens → 403. Also confirmed on the box by Kai's ENC check. `curl` was missing from the runtime image (T15's check assumes it) — added to `runtime/Dockerfile`.
+
+### T15: Drive MCP tools and signed fetch   [Status: done | Model: sonnet]
 - **Scope:** `api/cmd/bob/tools_drive.go`: `drive_search`, `drive_list`, `drive_read`,
   `drive_fetch` (Interfaces), each with `Available` = the caller's project has a Drive client.
   `drive_read` pages text by `offset`/`limit`. `drive_fetch` builds
@@ -1170,7 +1178,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   `./stack restart`): a dev chat lists a Drive folder, reads a Google Doc as markdown, and
   `drive_fetch` + `curl` saves a PDF into `/project/work`.
 - **Depends on:** T8, T9, T14
-- [ ] done
+- [x] done
 - Notes: (executor) `api/cmd/bob/tools_drive.go` registers `drive_search`, `drive_list`,
   `drive_read`, `drive_fetch` with `Available` = `a.drive[c.Project]` present (same pattern as
   T10's worker tools). `drive_fetch` calls `Client.Download` once to get `name`/`mime_type` (no
@@ -1207,6 +1215,8 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   go test ./... -count=1 -v | grep -cE -- "--- (SKIP|FAIL)"` → `0`; `./stack build && ./stack
   restart` → `curl http://127.0.0.1:8070/healthz` → `ok`; `curl -o /dev/null -w '%{http_code}'
   http://127.0.0.1:8070/drive/fetch/garbage` → `403`.
+
+  (orchestrator, 2026-09-30) Live check passed on laptop `dev` after Kai's codex login and Drive token: Codex chat ran `ls /project` + `bob_whoami` (events command_execution, mcp_tool_call), resume kept the thread id, UI rendered both turns before and after reload (headless Chromium screenshot); Codex listed the `haiku` skill; drive_list/drive_read (Doc → text/markdown)/drive_fetch (15 KB file, 200) and tampered tokens → 403. Also confirmed on the box by Kai's ENC check. `curl` was missing from the runtime image (T15's check assumes it) — added to `runtime/Dockerfile`.
 
 ### T16: `./stack deploy`, secrets moved, ENC goes live   [Status: done | Model: sonnet]
 - **Scope:**
