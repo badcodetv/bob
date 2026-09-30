@@ -25,8 +25,9 @@ services:
       BOB_SESSION_SECRET: ${BOB_SESSION_SECRET:?}
       BOB_PROJECT_MAP: ${BOB_PROJECT_MAP:?}
       BOB_PUBLIC_URL: ${BOB_PUBLIC_URL:?}
-      BOB_PROJECTS: enc
+      BOB_PROJECTS: enc,marketing
       BOB_RUNTIME_TOKEN_ENC: ${BOB_RUNTIME_TOKEN_ENC:?}
+      BOB_RUNTIME_TOKEN_MARKETING: ${BOB_RUNTIME_TOKEN_MARKETING:?}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?}  # memory embeddings (T21); the API will not start without it
       BOB_EMBEDDING_MODEL: ${BOB_EMBEDDING_MODEL:-}  # optional; empty = text-embedding-3-small
       # Not `:?required`: a project with no BOB_DRIVE_TOKEN_<NAME> set is fine (T14) — the api
@@ -34,9 +35,11 @@ services:
       # only once some BOB_DRIVE_TOKEN_<NAME> is set (main.go is fatal in that case if these
       # are empty).
       BOB_ATTENTION_WEBHOOK_ENC: ${BOB_ATTENTION_WEBHOOK_ENC:-}  # optional; empty = no webhook (T23)
+      BOB_ATTENTION_WEBHOOK_MARKETING: ${BOB_ATTENTION_WEBHOOK_MARKETING:-}
       BOB_DRIVE_CLIENT_ID: ${BOB_DRIVE_CLIENT_ID:-}
       BOB_DRIVE_CLIENT_SECRET: ${BOB_DRIVE_CLIENT_SECRET:-}
       BOB_DRIVE_TOKEN_ENC: ${BOB_DRIVE_TOKEN_ENC:-}
+      BOB_DRIVE_TOKEN_MARKETING: ${BOB_DRIVE_TOKEN_MARKETING:-}
     networks: [box-db, bob-projects]
     ports:
       - "127.0.0.1:8100:8070"              # Caddy only
@@ -60,6 +63,24 @@ services:
     pids_limit: 4096
     stop_grace_period: 10m
 
+  bob-project-marketing:
+    image: europe-west1-docker.pkg.dev/webkit-servers/bob/runtime:${TAG:?run ./stack deploy <tag>}
+    container_name: bob-project-marketing
+    init: true
+    restart: unless-stopped
+    environment:
+      BOB_PROJECT_NAME: marketing
+      BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_MARKETING:?}
+      BOB_API_URL: http://api:8070
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_MARKETING:?}
+    volumes:
+      - bob-project-marketing:/project
+    networks: [bob-projects]
+    mem_limit: 8g
+    pids_limit: 4096
+    stop_grace_period: 10m
+
 networks:
   box-db:
     external: true
@@ -68,4 +89,6 @@ networks:
 
 volumes:
   bob-project-enc:
+    external: true
+  bob-project-marketing:
     external: true
