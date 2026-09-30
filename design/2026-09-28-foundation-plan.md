@@ -1305,7 +1305,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 
 ### Part 2 — marketing
 
-### T17: Marketing project   [Status: in progress — deployed at 99decbb; live check waits on Kai | Model: sonnet]
+### T17: Marketing project   [Status: done | Model: sonnet]
 - **Scope:** `deploy/compose.yml`: add `bob-project-marketing` (as enc: `BOB_PROJECT_NAME:
   marketing`, `BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_MARKETING:?}`,
   `GITHUB_TOKEN: ${GITHUB_TOKEN_MARKETING:?}`), set `BOB_PROJECTS: enc,marketing` and add
@@ -1319,8 +1319,9 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - **Validation:** `TAG=x docker compose --env-file deploy/env.example -f deploy/compose.yml config >/dev/null`
   → exit 0; the live check, observed by Kai.
 - **Depends on:** T16
-- [ ] done
+- [x] done
 - Notes:
+  (orchestrator, 2026-09-30) Done. Deployed at `99decbb` (then `2e4dfc6` with wolf); Kai's live check passed: a Claude plain chat in `marketing` cloned `badcodetv/core`, searched the web and wrote a draft. Beyond the ticket (Kai): marketing also has Drive, via `BOB_DRIVE_TOKEN_MARKETING` (Kai's own token).
 
 ### Part 3 — Wolf
 
