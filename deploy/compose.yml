@@ -3,7 +3,7 @@
 #
 # This repository owns its own deployment now (design/2026-09-28-foundation-plan.md, Decision 15):
 # this file, deploy/env.example and ./stack deploy <tag> replace the compose file the ops
-# repository used to generate from projects.yaml. This file only NAMES variables — it is public —
+# repository used to generate. This file only NAMES variables — it is public —
 # so every secret it names must be set in .env.box or the box API/project container never sees it.
 #
 # Bob does NOT start containers and has NO Docker socket. Each project has a service of its own,

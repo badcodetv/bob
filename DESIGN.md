@@ -8,14 +8,14 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
 ## The shape
 
 ```
- browser ──► Bob API (Go) ──► Postgres        conversations, schedules, memory
-               │
+ browser ──► Bob API (Go) ──► Postgres        workers, conversations, schedules, memory
+               │  ▲ /mcp: Bob's tools — workers, schedules, memory, Drive, human attention
                │ HTTP, by container name. Bob starts nothing and has no Docker socket.
                ▼
         one container per project   declared in the deploy's compose file
           ├─ runtime server (TS)     routes a turn to the right harness, streams native events
-          ├─ Claude Agent SDK · Codex · OpenCode
-          └─ volume /project         repo checkout, per-session work dirs, harness state
+          ├─ Claude Agent SDK · Codex
+          └─ volume /project         shared work folder, skills, harness state
 ```
 
 ## Decisions
@@ -24,8 +24,12 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
    is deployment configuration, so its container is declared beside every other service and
    compose keeps it running. Bob reaches it by name and **has no Docker socket at all**. No
    Docker-in-Docker, no fleet, no port pool, no snapshots. Isolation beyond "one container" is a
-   VM, later, if ever. (Revised 2026-09-21; see
-   [design/2026-09-21-projects-in-compose.md](design/2026-09-21-projects-in-compose.md).)
+   VM, later, if ever. The projects Bob serves are `BOB_PROJECTS`, each with a runtime token of
+   its own (`BOB_RUNTIME_TOKEN_<NAME>`), and the deploy is owned by this repository —
+   `deploy/compose.yml`, `deploy/env.example`, `./stack deploy <tag>` — not generated elsewhere.
+   (Revised 2026-09-21 and 2026-09-28; see
+   [design/2026-09-21-projects-in-compose.md](design/2026-09-21-projects-in-compose.md) and
+   [design/2026-09-28-foundation-plan.md](design/2026-09-28-foundation-plan.md).)
 2. **One base image, `bob-runtime`.** A project that needs software (FFmpeg, …) has a Dockerfile
    `FROM bob-runtime` that only installs things. It never changes the entrypoint.
 3. **The volume is a cache; Postgres is the record.** Harness state lives on the volume
@@ -34,14 +38,15 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
 4. **Native events, no common format.** A session's engine never changes, so each event is
    stored as the harness emitted it, in one envelope: `session, seq, engine, kind, payload`.
    Code that reads events switches on engine. The UI converts per engine, at display time only.
-5. **Git holds configuration and the project's work; the database holds conversations.** A
-   project points at a repository and a subfolder holding `bob.md` (what the project is and how
-   its workers coordinate, appended to every system prompt), `workers/*.md` (engine, model,
-   effort, tools, system prompt) and `skills/`. Prompts are written offline, with Claude
-   Code, and pushed. The same repository holds what the project's agents produce — code, data,
-   notes, reports — committed and pushed from each chat's worktree (pull before push).
-   Conversations, schedules and memory live in Postgres. A project's secrets are environment
-   variables on its compose service. Git never holds a secret or a conversation.
+5. **Postgres holds configuration and conversations; git holds the project's work.** Workers
+   (engine, model, effort, tools, labels, system prompt) and each project's shared prompt live in
+   the database, and every change is a version with who, when and a required *why* — people edit
+   them in the web app, agents through MCP tools. The API composes each turn's system prompt (an
+   environment note, the project prompt, the worker's prompt) and hands it to a runtime that reads
+   no configuration. What a project's agents produce — code, data, notes, reports — lives in git:
+   chats clone repositories into the project's one shared work folder and commit and push from
+   there. A project's secrets are environment variables on its compose service. Git never holds a
+   secret or a conversation.
 6. **Harnesses mix within a project.** Each worker names its engine.
 7. **A schedule invokes a worker.** Workers have no schedules of their own. A schedule starts a
    new chat each time it fires, never two at once, and one switch pauses them all.
@@ -49,35 +54,38 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
    compose service, so each project sees only what it is given. This is an internal tool: every
    run, scheduled ones included, uses Kai's subscription logins, with Kai present. An API-key path
    exists (`ANTHROPIC_API_KEY`) but is not the default.
-9. **Tools are MCP servers:** Bob's core server (memory, `request_human_attention`), a small
-   Google Cloud Storage files server (`files_save/load/list`, a folder per session), and the
-   Google Drive/Gmail connection carried over from agent-bob.
+9. **Tools are MCP servers, and Bob's is in the API.** One endpoint (`/mcp`, JSON-RPC over
+   streamable HTTP) gives every chat workers, schedules, memory, read-only Google Drive and
+   `request_human_attention`, scoped to the chat's project by a per-chat token the API mints and
+   sends with each turn. Memory is hybrid search — labels, full-text and pgvector embeddings fused
+   by Reciprocal Rank Fusion — over an append-only store. Drive is a small read-only client in the
+   API (`drive.readonly`, one refresh token per project), not a proxy to Google's hosted MCP.
+   Files a chat writes go in its project's work folder, not a separate files server.
 
 ## Milestones
 
-- **M1** — API starts a project container; a Claude worker defined in git answers a message;
-  events are stored in Postgres and streamed back. *(done)*
-- **M2** — Codex worker in the same project, on a ChatGPT subscription. Cold boot from Postgres
-  for Claude (`SessionStore`) and Codex (rollout file).
-- **M3** — Google login, UI on assistant-ui (projects, workers, chat), git sync, per-project secrets. *(done)*
-- **M4** — Memory (carried over: labels, selectors, hybrid search), files MCP, human attention.
-- **M5** — Schedules *(done)*, Google Drive/Gmail, usage report. Then Wolf.
+- **M1** — API talks to a project container; a Claude worker answers a message; events are stored
+  in Postgres and streamed back. *(done)*
+- **M2** — Google login, UI on assistant-ui (projects, workers, chat), per-project secrets, and
+  schedules with a global pause switch. *(done)*
+- **M3** — Foundation ([design/2026-09-28-foundation-plan.md](design/2026-09-28-foundation-plan.md)):
+  workers and the project prompt in Postgres with history; Bob's MCP server; Codex as a second
+  engine; skills; Google Drive; schedule and worker tools; labelled hybrid memory; human attention
+  (a badge, an Overview list, an optional webhook); one scheduled run at a time per project; and
+  this repository's own `./stack deploy`. *(built and tested; not yet live on the box)*
+- **M4** — Live, in order: ENC (Codex, a Drive-fed canon written to its repository), the marketing
+  manager, then Wolf (a worker per hypothesis, each on a schedule). Each waits on logins and
+  tokens only a person can create, and on the box cutover.
 
-**Projects in compose** (Kai, 2026-09-21): Bob stops talking to Docker; each project's container
-is declared in the deploy's compose file, and which projects exist is a file Bob reads at boot.
-The encrypted-secrets subsystem is deleted — a secret is a compose environment variable now, and
-changing one is a deploy. Plan and tickets:
-[design/2026-09-21-projects-in-compose.md](design/2026-09-21-projects-in-compose.md).
-
-**Wolf as a Bob project** (Kai, 2026-09-17): Wolf is not a separate app; it is an ordinary Bob
-project. The Bob work it needs is Part A of
-[design/2026-09-17-wolf-as-a-bob-project.md](design/2026-09-17-wolf-as-a-bob-project.md) —
-A1 per-project access map, A2 the signed-in person in each turn, A3 push from worktrees, A4
-schedules (plus a global pause switch), A5 a sandboxed repo file viewer, A6 secrets pass-through
-and the per-project secrets table. *(All built 2026-09-17.)* Codex (M2) is next.
+Earlier plans, now folded in: **projects in compose** (2026-09-21: Bob stops talking to Docker and
+the encrypted-secrets subsystem goes, so a secret is a compose environment variable and changing
+one is a deploy) and **Wolf as a Bob project** (2026-09-17:
+[design/2026-09-17-wolf-as-a-bob-project.md](design/2026-09-17-wolf-as-a-bob-project.md) — Wolf is
+an ordinary Bob project: per-project access map, the signed-in person in each turn, schedules,
+a sandboxed file viewer).
 
 ## Not doing
 
 Config log, revert, git projection, onboarding/charter/architect, topologies, test labs,
 embedding for other apps, datasets, skills/images stores, event subscriptions and dispatch gate,
-console pages beyond chat. Each can come back if a real use needs it.
+console pages beyond chat, OpenCode as a third engine (for now). Each can come back if a real use needs it.

@@ -1735,7 +1735,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
 - [ ] done
 - Notes:
 
-### T26: End-to-end verification and docs   [Status: pending | Model: sonnet]
+### T26: End-to-end verification and docs   [Status: in progress — docs done; clean-slate run + live checks wait on T25 | Model: sonnet]
 - **Scope:** On the laptop from a clean state (Kai's go-ahead): `echo y | ./stack clean`;
   `./stack sql "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"`; re-create the vector
   extension (the schema drop removed it) with the T21 superuser command; `./stack build &&
@@ -1751,7 +1751,7 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   → no matches; the three live checks pass.
 - **Depends on:** T25
 - [ ] done
-- Notes:
+- Notes: docs part done (orchestrator-assigned executor): `README.md` and `DESIGN.md` rewritten to the plan as built (decisions 1, 5 and 9, milestones, diagram now Claude Agent SDK · Codex, "Not doing" gains OpenCode for now). Clean-slate wipe, the three live checks and the box cutover are pending on Kai's tokens; the acceptance grep still matches comments in `stack`, `scripts/dev-api` and `deploy/compose.yml` (see the Discovered Issues Log).
 
 ## Discovered Issues Log
 (appended by executors during implementation)
@@ -1880,3 +1880,4 @@ bytes; anything else → an error telling the agent to use `drive_fetch`.
   that chat (the agent reports "bob MCP failed to connect"). Not fixed (out of scope); worth a
   registration-time `json.Valid(InputSchema)` check in `Server.Register`.
 - (orchestrator, T24 screenshots) Overview "Recent conversations": a plain chat (no worker) shows its subtitle as ", 1 message" — the worker name is empty and the comma stays. Cosmetic; pre-dates T24.
+- **T26 (docs):** the acceptance grep still matches three code comments, none needing behaviour change: `stack` (header and the `deploy` leftover-removal line: `sudo rm -f .../compose.projects.yml .../projects.yaml` on the box is real, safe cleanup of the old ops deployment and can go once the cutover has run), `scripts/dev-api:2` (comment says "see scripts/import-agent-bob-env", a script that no longer exists; safe to reword) and `deploy/compose.yml:6` (comment naming `projects.yaml` as what ops used to generate from; safe to reword). Also: `runtime/Dockerfile` still sets `XDG_DATA_HOME=/project/.bob/opencode`, an OpenCode leftover the entrypoint still creates.

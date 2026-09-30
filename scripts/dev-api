@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run the API on the host with this repo's .env (see scripts/import-agent-bob-env).
+# Run the API on the host with this repo's .env.
 set -eu
 cd "$(dirname "$0")/.."
 [ -f .env ] || { echo "no .env — copy deploy/env.example to .env and fill it in" >&2; exit 1; }
