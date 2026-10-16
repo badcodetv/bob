@@ -5,7 +5,7 @@ import { Thread, type ThreadComponents } from '@/components/assistant-ui/element
 import { api, type BobEvent, type Session, type Settings, type Worker } from './api'
 import { ChatHeader } from './ChatHeader'
 import { claudeDelta, claudeEfforts, claudeMessages, claudeModels } from './engines/claude'
-import { codexEfforts, codexMessages, codexModels } from './engines/codex'
+import { codexDelta, codexEfforts, codexMessages, codexModels } from './engines/codex'
 import { TrailGroup, TrailStep } from './Trail'
 import { engineName, Menu, MenuItem, MenuNote, prettyModel, WorkerBadge } from './ui'
 
@@ -37,7 +37,8 @@ export function Chat({ session: initial, worker, removed, onSent, onDeleted }: {
       const e = JSON.parse(msg.data) as BobEvent
       if (!e.id) {
         // Ephemeral: a streamed token delta.
-        if (session.engine === 'claude') setLive((s) => s + claudeDelta(e.payload))
+        const delta = session.engine === 'claude' ? claudeDelta(e.payload) : session.engine === 'codex' ? codexDelta(e.payload) : ''
+        if (delta) setLive((s) => s + delta)
         return
       }
       setLive('')

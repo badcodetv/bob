@@ -14,7 +14,7 @@ skills, tool loops); Bob only gives them a computer, configuration, memory and a
                ▼
         one container per project   declared in the deploy's compose file
           ├─ runtime server (TS)     routes a turn to the right harness, streams native events
-          ├─ Claude Agent SDK · Codex
+          ├─ Claude Agent SDK · Codex app-server
           └─ volume /project         shared work folder, skills, harness state
 ```
 
