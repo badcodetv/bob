@@ -25,3 +25,18 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+func TestHarnessSessionID(t *testing.T) {
+	cases := []struct{ engine, event, want string }{
+		{"claude", `{"type":"system","subtype":"init","session_id":"abc"}`, "abc"},
+		{"claude", `{"type":"assistant","session_id":"abc"}`, ""},
+		{"codex", `{"type":"thread.started","thread_id":"t1"}`, "t1"},
+		{"codex", `{"type":"system","subtype":"init","session_id":"abc"}`, ""},
+		{"claude", `not json`, ""},
+	}
+	for _, c := range cases {
+		if got := HarnessSessionID(c.engine, []byte(c.event)); got != c.want {
+			t.Errorf("HarnessSessionID(%s, %s) = %q; want %q", c.engine, c.event, got, c.want)
+		}
+	}
+}

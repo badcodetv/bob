@@ -30,3 +30,25 @@ func Classify(engine string, event json.RawMessage) (kind string, ephemeral bool
 	}
 	return kind, false
 }
+
+// HarnessSessionID returns the harness's own session id if this event announces it, else "".
+// Claude's system.init carries it as session_id, Codex's thread.started as thread_id. Bob saves
+// it as soon as it is seen, so a turn that is cut off still leaves the chat resumable.
+func HarnessSessionID(engine string, event json.RawMessage) string {
+	var head struct {
+		Type      string `json:"type"`
+		Subtype   string `json:"subtype"`
+		SessionID string `json:"session_id"`
+		ThreadID  string `json:"thread_id"`
+	}
+	if json.Unmarshal(event, &head) != nil {
+		return ""
+	}
+	switch {
+	case engine == "claude" && head.Type == "system" && head.Subtype == "init":
+		return head.SessionID
+	case engine == "codex" && head.Type == "thread.started":
+		return head.ThreadID
+	}
+	return ""
+}

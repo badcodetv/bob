@@ -105,3 +105,54 @@ func TestCreateSessionFindsTheWorkerInTheDatabase(t *testing.T) {
 		t.Errorf("runtime was asked for %v; workers are Bob's, not the runtime's", unexpected)
 	}
 }
+
+// A turn cut off before its done line (interrupted, a deploy, a broken stream) still saves the
+// harness's session id, from the init event, so the next message resumes the same conversation
+// instead of starting a new one with no memory of the first. An event holding a NUL (a tool that
+// read a binary file) is stored rather than failing the turn.
+func TestCutOffTurnStillResumes(t *testing.T) {
+	a, rt, _ := newScheduleApp(t)
+	cutOff := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/turns" {
+			fmt.Fprintln(w, `{"engine":"claude","event":{"type":"system","subtype":"init","session_id":"h-first"}}`)
+			fmt.Fprintln(w, `{"engine":"claude","event":{"type":"user","message":{"content":"bin\u0000ary \\u0000"}}}`)
+		}
+	}))
+	t.Cleanup(cutOff.Close)
+	a.runtime = fakeContainers{cutOff.URL}
+
+	sess, err := a.store.CreateSession(t.Context(), "wolf", nil, "", "claude", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kai := auth.User{Email: "kai@example.com"}
+	if err := a.runTurn(t.Context(), sess, kai, "the long prompt"); err == nil {
+		t.Fatal("a turn with no done line should fail")
+	}
+	events, _ := a.store.Events(t.Context(), sess.ID, 0)
+	var kinds []string
+	for _, e := range events {
+		kinds = append(kinds, e.Kind)
+	}
+	if got := strings.Join(kinds, " "); got != "system.init user bob.turn_failed" {
+		t.Errorf("events = %s", got)
+	}
+	if got := string(events[1].Payload); !strings.Contains(got, `bin�ary \\u0000`) {
+		t.Errorf("NUL event stored as %s", got)
+	}
+
+	a.runtime = fakeContainers{rtURL(t, rt)}
+	sess, _ = a.store.Session(t.Context(), sess.ID)
+	if err := a.runTurn(t.Context(), sess, kai, "did you see it?"); err != nil {
+		t.Fatal(err)
+	}
+	if turns, _ := rt.sent(); len(turns) != 1 || turns[0].Resume != "h-first" {
+		t.Errorf("next turn = %+v, want it to resume h-first", turns)
+	}
+}
+
+func rtURL(t *testing.T, rt *fakeRuntime) string {
+	srv := httptest.NewServer(rt)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}

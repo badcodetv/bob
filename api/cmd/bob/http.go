@@ -555,6 +555,20 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 		fail(err)
 		return
 	}
+	// The harness's session id is saved the moment it is announced, not only when the turn ends:
+	// a turn that is interrupted, fails, or is cut off by a deploy never sends its done line, and
+	// without the id the next message would start a new conversation with no memory of this one.
+	saved := sess.HarnessSessionID
+	saveHarnessID := func(id string) {
+		if id == "" || id == saved {
+			return
+		}
+		if err := a.store.SetHarnessSessionID(context.Background(), sess.ID, id); err != nil {
+			log.Printf("session %s: saving harness session id: %v", sess.ID, err)
+			return
+		}
+		saved = id
+	}
 	var done *runtime.TurnLine
 	err = runtime.RunTurn(ctx, base, turn,
 		func(line runtime.TurnLine) error {
@@ -562,6 +576,7 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 				done = &line
 				return nil
 			}
+			saveHarnessID(engines.HarnessSessionID(sess.Engine, line.Event))
 			kind, ephemeral := engines.Classify(sess.Engine, line.Event)
 			e := store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: kind, Payload: line.Event}
 			if ephemeral {
@@ -579,10 +594,8 @@ func (a *app) runTurn(ctx context.Context, sess store.Session, user auth.User, t
 	case done.Error != "":
 		fail(errors.New(done.Error))
 	}
-	if done != nil && done.HarnessSessionID != "" && done.HarnessSessionID != sess.HarnessSessionID {
-		if err := a.store.SetHarnessSessionID(context.Background(), sess.ID, done.HarnessSessionID); err != nil {
-			log.Printf("session %s: saving harness session id: %v", sess.ID, err)
-		}
+	if done != nil {
+		saveHarnessID(done.HarnessSessionID)
 	}
 	if err == nil && done != nil && done.Error == "" {
 		_, _ = a.record(context.Background(), store.Event{SessionID: sess.ID, Engine: sess.Engine, Kind: "bob.turn_done", Payload: json.RawMessage(`{}`)})

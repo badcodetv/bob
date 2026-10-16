@@ -2,6 +2,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -266,9 +267,35 @@ type Event struct {
 }
 
 func (s *Store) AppendEvent(ctx context.Context, e Event) (Event, error) {
+	e.Payload = stripNUL(e.Payload)
 	err := s.db.QueryRow(ctx, `INSERT INTO events (session_id, engine, kind, payload) VALUES ($1, $2, $3, $4)
 		RETURNING id, created_at`, e.SessionID, e.Engine, e.Kind, e.Payload).Scan(&e.ID, &e.CreatedAt)
 	return e, err
+}
+
+// stripNUL replaces each \u0000 escape in a JSON document with �. Postgres's jsonb refuses
+// \u0000, and a tool that reads a binary file puts one in its result: storing that event would
+// fail and take the turn down with it. An escaped backslash before "u0000" (\\u0000) is text, not
+// a NUL, and is left alone.
+func stripNUL(b []byte) []byte {
+	if !bytes.Contains(b, []byte(`\u0000`)) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' || i+1 >= len(b) {
+			out = append(out, b[i])
+			continue
+		}
+		if bytes.HasPrefix(b[i:], []byte(`\u0000`)) {
+			out = append(out, `�`...)
+			i += 5
+			continue
+		}
+		out = append(out, b[i], b[i+1]) // any other escape, \\ included, is copied whole
+		i++
+	}
+	return out
 }
 
 // Events returns a session's events with id > after, oldest first.
