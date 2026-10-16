@@ -4,7 +4,7 @@ import type { ThreadMessageLike } from '@assistant-ui/react'
 import type { BobEvent } from '../api'
 
 /** Models and effort levels offered when choosing a Claude chat's settings. */
-export const claudeModels = ['claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']
+export const claudeModels = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 export const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max']
 
 type Part = Exclude<ThreadMessageLike['content'], string>[number]

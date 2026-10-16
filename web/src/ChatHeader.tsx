@@ -34,7 +34,7 @@ export function ChatHeader({ worker, engine, title, workerDefaults, settings, on
     const values = own && !opts[key].includes(own) ? [own, ...opts[key]] : opts[key]
     return (
       <Menu label={`${label} for this chat`} align="end"
-        triggerClassName="hover:bg-accent data-popup-open:bg-accent inline-flex items-baseline gap-1.5 rounded-md px-2 py-1 text-[13px]"
+        triggerClassName="hover:bg-accent data-popup-open:bg-accent inline-flex shrink-0 items-baseline gap-1.5 rounded-md px-2 py-1 text-[13px] whitespace-nowrap"
         trigger={<>
           <span className="text-faint hidden text-xs sm:inline">{label}</span>
           <span className={cn(own && 'text-cobalt')}>{own ? show(own) : fallback ? show(fallback) : 'Default'}</span>
@@ -53,19 +53,18 @@ export function ChatHeader({ worker, engine, title, workerDefaults, settings, on
 
   return (
     <PageBar>
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
         {worker && <WorkerBadge name={worker} engine={engine} />}
         <span className="shrink-0 text-[15px] font-semibold">{worker || 'Plain chat'}</span>
         <span className="text-faint hidden text-xs sm:inline">{engineName(engine)}</span>
         {title && <span className="text-muted-foreground hidden min-w-0 truncate pl-1 text-[13px] lg:inline">{title}</span>}
       </div>
-      <span className="flex-1" />
       {picker('model', 'Model')}
       {picker('effort', 'Effort')}
       {onDelete && (
         <>
           <Menu label="More actions" align="end"
-            triggerClassName="text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent grid size-8 place-items-center rounded-lg"
+            triggerClassName="text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent grid size-8 shrink-0 place-items-center rounded-lg"
             trigger={<MoreHorizontalIcon className="size-[18px]" />}>
             <MenuItem danger onClick={() => setConfirming(true)}>Delete chat…</MenuItem>
           </Menu>
