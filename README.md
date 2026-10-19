@@ -13,7 +13,7 @@ runtime/      bob-runtime image — the small server inside each project contain
 web/          the web app — assistant-ui chat, workers, schedules, overview
 deploy/       compose.yml (the box), compose.dev.yml (the laptop's "dev" project), env.example
 scripts/      publish, drive-token, dev-api, check-file-viewer.mjs
-stack         local development and `./stack publish` / `./stack deploy <tag>`
+stack         local development and `./stack deploy` (publish + ship) / `./stack deploy <tag>` (rollback)
 ```
 
 ## Which projects exist
@@ -56,8 +56,8 @@ cp deploy/env.example .env            # once: fill it in (see Environment below)
 
 `./stack` on its own lists the rest: `stop`, `restart`, `status`, `logs`, `psql`, `sql`, `test`,
 `containers`, `clean` (removes project containers and their volumes), `publish` and `deploy`. It
-runs the API and the web app on the host; Postgres (the shared local one from the ops repository,
-`OPS_DIR` if it is not beside this repository) and the project container run in Compose.
+runs the API and the web app on the host; Bob's own Postgres and the project container run in
+Compose (`deploy/compose.dev.yml`). No other repository is needed.
 
 The one local project is `dev` ([deploy/compose.dev.yml](deploy/compose.dev.yml)). Its runtime
 publishes port 8100 on `127.0.0.1`, because a Bob running on the host cannot resolve container
@@ -314,15 +314,18 @@ payload. Bob's own events are `bob.user_message`, `bob.turn_done` and `bob.turn_
 
 One image holds the API and the built web app (`Dockerfile`); project containers use
 `runtime/Dockerfile`. This repository owns its own deployment: `deploy/compose.yml` and
-`deploy/env.example` are committed here, and two `./stack` verbs drive publishing and deploying:
+`deploy/env.example` are committed here. The box itself (Caddy in front, the backup machinery,
+the map of what runs where) and the framework every app on it roughly follows are in BadCode's
+private ops repository, `docs/deploying-apps.md`.
 
 ```sh
-./stack publish        # scripts/publish: builds api+runtime, pushes them tagged with HEAD's sha
+./stack deploy         # the everyday one: publish HEAD (unless already published), then ship it
+./stack deploy <tag>   # ship a tag that is already published — this is how you roll back
+./stack publish        # publish only: builds api+runtime, pushes them tagged with HEAD's sha
                         #   (refuses a dirty tree, so a tag always names committed code)
-./stack deploy <tag>   # deploys that tag to the box ($BOX, default ubuntu@box.badcode.tv)
 ```
 
-`./stack deploy <tag>` refuses without a tag, and refuses unless `deploy/compose.yml` exists at
+`./stack deploy` refuses unless `deploy/compose.yml` exists at
 that tag (i.e. it was published) and `.env.box` exists here (the box's production secrets — see
 below; git-ignored, never committed). It then, over ssh: writes `deploy/compose.yml` at that tag and
 `.env.box` (mode 600, umask 077 + write-then-rename, so there is never a partial or
