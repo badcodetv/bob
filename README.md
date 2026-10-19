@@ -64,16 +64,13 @@ publishes port 8100 on `127.0.0.1`, because a Bob running on the host cannot res
 names; `./stack start` sets `BOB_PROJECTS=dev` and `BOB_RUNTIME_HOSTS=dev=127.0.0.1:8100` for the
 API. The container reaches the API at `http://host.docker.internal:8070`.
 
-**Memory needs pgvector.** The API refuses to boot unless the `vector` extension exists in the
-`bob` database, and the `bob` role cannot create it. As the Postgres superuser, once per database
-(and again after any schema reset, which drops it):
-
-```sh
-docker compose -f ~/projects/badcode/ops/apps/postgres/compose.local.yml exec -T postgres \
-  psql -U postgres -d bob -c 'CREATE EXTENSION IF NOT EXISTS vector'
-```
-
-The box needs the same, in its `bob` database, before the first deploy that includes memory.
+**Postgres is Bob's own**: the `postgres` service in `deploy/compose.dev.yml` (laptop, on
+`127.0.0.1:5432`) and `deploy/compose.yml` (box, reachable only by the API), both built from
+`deploy/postgres/`. Its first start creates role `app_bob`, database `bob` and the `vector` extension
+that memory needs (`deploy/postgres/initdb/10-bob.sh`). After a schema reset, which drops the
+extension, recreate it as the superuser: `./stack psql -c 'CREATE EXTENSION IF NOT EXISTS vector'`.
+The image tag is pinned in both compose files, never `${TAG}`, so a deploy does not restart the
+database; change `deploy/postgres/` → bump the `-N` suffix in both files → `./stack publish-postgres`.
 
 Sign in with Google (an account in `BOB_PROJECT_MAP`), open `dev`, and start a chat.
 
@@ -336,7 +333,7 @@ network and each `bob-project-*` volume the new compose file names exist, then `
 `http://127.0.0.1:8100/healthz` before printing `docker ps --filter name=bob-project-`.
 
 `deploy/compose.yml` has Bob and **one service per project**, declared by hand rather than
-generated — see the file itself. The API joins Postgres's network (`box-db`) and the
+generated — see the file itself. The API joins Bob's own Postgres on the `db` network and the
 `bob-projects` network, on which every project service also sits; project services publish no
 ports and carry their own `BOB_RUNTIME_TOKEN_<NAME>` / `GITHUB_TOKEN_<NAME>`, their limits
 (`mem_limit`, `pids_limit`) and a `stop_grace_period` long enough for a turn in flight to finish —
@@ -346,13 +343,15 @@ than given the whole env file, so it never sees a project's credentials. Bob its
 socket**.
 
 **Production secrets** are `.env.box` here: copy `deploy/env.example` and fill in every variable
-the compose file names, including `OPENAI_API_KEY` (the API will not start without it) and, per
+the compose file names, including `OPENAI_API_KEY` (the API will not start without it), `BOB_PG_SUPERUSER_PASSWORD` and
+`BOB_DB_PASSWORD` (app_bob's, the same password `BOB_DATABASE_URL` carries) and, per
 project, `BOB_RUNTIME_TOKEN_<NAME>` and `GITHUB_TOKEN_<NAME>`.
 
 > **Status:** production runs this repository's Bob, deployed with `./stack deploy` since the
 > 2026-09-30 cutover (the old API and `bob-project-wolf` stopped, the `bob` schema reset,
 > `CREATE EXTENSION vector` run as the superuser). The ops repository no longer holds `apps/bob/`;
-> it still provides the database, role, `box-db` network, Caddy route and `app` helper. Codex is
+> it still provides the Caddy route, the `app` helper and the backup machinery (the `[bob]` stanza in
+> `/etc/pgbackrest`). The database moves into this stack: ops `docs/move-bob-database.md`. Codex is
 > logged in per project on the box with
 > `sudo docker exec -it bob-project-<name> codex login --device-auth`; the login lives on the
 > project's volume, so restarts and redeploys keep it.
@@ -387,7 +386,7 @@ this repository; `.env.box` is not, so keep a copy where the other production se
 ```
 
 Go tests that need a database **skip** without `BOB_TEST_DATABASE_URL`, and `go test` still prints
-`ok` — `./stack test` sets it (a superuser URL on the shared local Postgres, since each test
+`ok` — `./stack test` sets it (a superuser URL on Bob's local Postgres, since each test
 creates its own database). The runtime tests run from `dist/`, so rebuild first:
 
 ```sh

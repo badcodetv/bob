@@ -10,9 +10,63 @@
 # declared by hand below (Decision 4: BOB_PROJECTS, one BOB_RUNTIME_TOKEN_<NAME> per project). Bob
 # reaches them by name on the bob-projects network, which joins nothing else: no Postgres, and
 # apps on 127.0.0.1 are out of reach.
+#
+# Postgres is Bob's own (ops design/2026-10-19-every-app-brings-its-own-postgres.md): the
+# `postgres` service below, on the `db` network that only the API joins. Its image tag is pinned
+# here and is never ${TAG}, and it reads no env_file, so a deploy of a new Bob does not restart it.
 name: bob
 
 services:
+  postgres:
+    image: europe-west1-docker.pkg.dev/webkit-servers/bob/postgres:18.6-1
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${BOB_PG_SUPERUSER_PASSWORD:?}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      BOB_DB_PASSWORD: ${BOB_DB_PASSWORD:?}     # app_bob's; read only on the first start (initdb)
+    # Settings are flags rather than a mounted file, so ./stack deploy still copies one file.
+    # archive_command ships every change to Google Cloud Storage within archive_timeout; the stanza
+    # [bob] lives in the box's /etc/pgbackrest/pgbackrest.conf (ops/apps/postgres/backup).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - huge_pages=try
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=60s
+      - -c
+      - archive_command=pgbackrest --stanza=bob archive-push %p
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - wal_compression=zstd
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - log_min_duration_statement=1s
+      - -c
+      - log_checkpoints=on
+    volumes:
+      - /srv/apps/bob/pgdata:/var/lib/postgresql
+      - /srv/backup/spool:/srv/backup/spool
+      - /etc/pgbackrest:/etc/pgbackrest:ro
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [db]
+    mem_limit: 8g
+    stop_grace_period: 2m
+
   api:
     image: europe-west1-docker.pkg.dev/webkit-servers/bob/api:${TAG:?run ./stack deploy <tag>}
     restart: unless-stopped
@@ -42,7 +96,10 @@ services:
       BOB_DRIVE_CLIENT_SECRET: ${BOB_DRIVE_CLIENT_SECRET:-}
       BOB_DRIVE_TOKEN_ENC: ${BOB_DRIVE_TOKEN_ENC:-}
       BOB_DRIVE_TOKEN_MARKETING: ${BOB_DRIVE_TOKEN_MARKETING:-}
-    networks: [box-db, bob-projects]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [db, bob-projects]
     ports:
       - "127.0.0.1:8100:8070"              # Caddy only
     mem_limit: 1g
@@ -103,8 +160,7 @@ services:
     stop_grace_period: 10m
 
 networks:
-  box-db:
-    external: true
+  db: {}                                   # Bob's API and Bob's Postgres, nothing else
   bob-projects:
     external: true
 

@@ -16,24 +16,28 @@
 #   ./stack clean          remove every project container and volume (asks first)
 #   ./stack publish        build Bob's two images and push them, tagged with HEAD's sha
 #                            (scripts/publish; refuses a dirty tree)
-#   ./stack deploy <tag>   deploy that published tag to the box ($BOX, default
+#   ./stack publish-postgres  build and push Bob's Postgres image at the tag pinned in
+#                            deploy/compose.yml. Only when deploy/postgres/ changes; refuses to
+#                            overwrite a tag that is already published
+#   ./stack deploy <tag> [--files-only]
+#                          deploy that published tag to the box ($BOX, default
 #                            ubuntu@box.badcode.tv): refuses without a tag, and refuses unless
 #                            deploy/compose.yml exists at that tag and .env.box exists here; then
 #                            over ssh: writes compose.yml, .env (mode 600, umask 077 + rename) and
 #                            release.env to /srv/apps/bob, removes leftover
 #                            compose.projects.yml/projects.yaml, ensures the bob-projects network
 #                            and each bob-project-* volume the new compose file names, pulls and
-#                            brings the box up, and waits on its healthz
+#                            brings the box up, and waits on its healthz. --files-only stops
+#                            after writing the files: nothing is pulled, started or stopped
 #
 # Deliberately small. The API and the web app run on the host — Go and Vite both
 # rebuild faster there. One container, "dev" (deploy/compose.dev.yml), plays the part the box's
 # per-project containers play in production: Bob does not start containers, it only talks to them.
 #
-# Postgres is NOT Bob's. It is the one shared local Postgres in the ops repository
-# (ops/apps/postgres), built from the same Dockerfile as the box, so a laptop runs
-# PostgreSQL 18.6 with production's extensions and tuning. Every project gets its
-# own database and role there, exactly as on the box. Set OPS_DIR if ops is not at
-# ~/projects/badcode/ops.
+# Postgres is Bob's own: the `postgres` service in deploy/compose.dev.yml, the same image
+# (deploy/postgres) the box runs, on 127.0.0.1:5432. No other repository is needed. If the old
+# shared local Postgres from the ops repository is still running, it holds port 5432 — stop it
+# with ops/apps/postgres/dev down.
 #
 # Settings come from .env, a real file here (deploy/env.example is the template). Logs and
 # process ids live in .stack/, which is git-ignored.
@@ -66,17 +70,12 @@ projects_up() {
   docker compose --env-file ./.env -f "$COMPOSE_DEV" up -d >/dev/null
 }
 
-# The one shared local Postgres lives in the ops repository, because it is shared by every
-# project rather than owned by this one — the same reason it is its own app on the box. It is
-# built from the box's Dockerfile, so local is PostgreSQL 18.6 with production's extensions.
-OPS="${OPS_DIR:-$HOME/projects/badcode/ops}"
-PG="$OPS/apps/postgres"
-pg() {
-  [ -x "$PG/dev" ] || die "no shared Postgres at $PG.
-   It lives in the ops repository. Clone it beside this one, or set OPS_DIR=/path/to/ops."
-  "$PG/dev" "$@"
+# Bob's own Postgres, from deploy/compose.dev.yml. --env-file for the same reason as projects_up.
+dev_compose() { docker compose --env-file ./.env -f "$COMPOSE_DEV" "$@"; }
+postgres_up() {
+  dev_compose up -d --wait postgres >/dev/null \
+    || die "Postgres did not come up: ./stack logs postgres (is another Postgres holding 127.0.0.1:5432?)"
 }
-postgres_up() { pg up >/dev/null || die "Postgres did not come up: ./stack logs postgres"; }
 
 case "${1:-}" in
 
@@ -137,9 +136,8 @@ stop)
     fi
     rm -f "$pidfile"
   done
-  # The shared Postgres is deliberately NOT stopped: other projects use it, and stopping it here
-  # would break them. Stop it on purpose with ops/apps/postgres/dev down.
-  say "Postgres left running (it is shared — ops/apps/postgres/dev down stops it)"
+  # Postgres keeps running, like the project containers: the next start is instant.
+  say "Postgres left running (docker compose -f $COMPOSE_DEV stop postgres stops it)"
   say "stopped. Project containers keep running; ./stack containers lists them."
   say "(never run 'docker compose down -v' here: -v deletes volumes, and a project's volume is its chats' worktrees.)"
   ;;
@@ -152,8 +150,8 @@ restart)
 status)
   running "$API_PID" && say "API: running (pid $(cat "$API_PID"))" || say "API: stopped"
   running "$WEB_PID" && say "web app: running (pid $(cat "$WEB_PID"))" || say "web app: stopped"
-  if pg status >/dev/null 2>&1; then
-    say "Postgres: running (shared, $PG)"
+  if dev_compose exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then
+    say "Postgres: running (Bob's own, 127.0.0.1:5432)"
   else
     say "Postgres: stopped"
   fi
@@ -168,7 +166,7 @@ status)
 logs)
   shift || true
   case "${1:-}" in
-    postgres) exec docker compose -f "$PG/compose.local.yml" logs -f postgres ;;
+    postgres) dev_compose logs -f postgres; exit ;;
     api) exec tail -f "$API_LOG" ;;
     web) exec tail -f "$WEB_LOG" ;;
     *) exec tail -f "$API_LOG" "$WEB_LOG" ;;
@@ -177,13 +175,12 @@ logs)
 
 psql)
   shift || true
-  exec "$PG/dev" psql bob "$@"
+  dev_compose exec -e PGPASSWORD=local postgres psql -U postgres -d bob "$@"; exit
   ;;
 
 sql)
   [ $# -ge 2 ] || die 'usage: ./stack sql "SELECT …"'
-  exec docker compose -f "$PG/compose.local.yml" exec -T -e PGPASSWORD=local postgres \
-    psql -U app_bob -d bob -At -c "$2"
+  dev_compose exec -T postgres psql -U app_bob -d bob -At -c "$2"; exit
   ;;
 
 test)
@@ -191,7 +188,7 @@ test)
   postgres_up
   # The superuser, not app_bob: these tests create a throwaway database each, and app_bob
   # deliberately cannot (one database per app is the rule production enforces).
-  say "Go (throwaway databases on the shared local Postgres)"
+  say "Go (throwaway databases on Bob's local Postgres)"
   (cd api && BOB_TEST_DATABASE_URL=postgres://postgres:local@127.0.0.1:5432/postgres?sslmode=disable go test ./...)
   say "runtime (rebuilt first, so deleted tests stop running and new ones start)"
   (cd runtime && rm -rf dist && npm run build && npm test --silent)
@@ -220,9 +217,24 @@ publish)
   exec scripts/publish
   ;;
 
+publish-postgres)
+  image="$(awk '/^  postgres:/{f=1} f && /image:/{print $2; exit}' deploy/compose.yml)"
+  [ -n "$image" ] || die "no postgres image in deploy/compose.yml"
+  grep -qF "image: $image" "$COMPOSE_DEV" || die "deploy/compose.dev.yml does not pin $image — keep the two the same"
+  if docker manifest inspect "$image" >/dev/null 2>&1; then
+    die "$image is already published. Pinned tags are never overwritten: bump the -N suffix in both compose files"
+  fi
+  say "building $image"
+  docker build -t "$image" deploy/postgres
+  docker push "$image"
+  say "published $image — a deploy carrying the new tag RESTARTS Bob's Postgres, once"
+  ;;
+
 deploy)
   tag="${2:-}"
-  [ -n "$tag" ] || die "usage: ./stack deploy <tag>"
+  files_only="${3:-}"
+  [ -n "$tag" ] || die "usage: ./stack deploy <tag> [--files-only]"
+  [ -z "$files_only" ] || [ "$files_only" = --files-only ] || die "unknown option $files_only"
   BOX="${BOX:-ubuntu@box.badcode.tv}"
   git cat-file -e "$tag:deploy/compose.yml" 2>/dev/null \
     || die "no deploy/compose.yml at $tag — publish it first (./stack publish)"
@@ -254,6 +266,11 @@ deploy)
       | grep '^bob-project-'); do
     ssh "$BOX" "sudo docker volume create $vol >/dev/null"
   done
+
+  if [ -n "$files_only" ]; then
+    say "files written for $tag; nothing pulled, started or stopped (--files-only)"
+    exit 0
+  fi
 
   say "pull + up"
   ssh "$BOX" 'sudo app bob pull --quiet && sudo app bob up -d --remove-orphans'

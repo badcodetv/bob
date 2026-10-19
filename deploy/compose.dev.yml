@@ -5,9 +5,32 @@
 #
 # The API itself runs on the host (./stack start), not in Compose — Go rebuilds faster there — so
 # this container reaches it over host.docker.internal, and BOB_API_URL says so.
+#
+# Postgres is Bob's own here too — the same image as the box (deploy/postgres), published on
+# 127.0.0.1:5432 because the API and the tests run on the host. Its data is the named volume
+# bob-dev-pgdata: `docker compose down` keeps it, only `down -v` destroys it.
 name: bob-dev
 
 services:
+  postgres:
+    image: europe-west1-docker.pkg.dev/webkit-servers/bob/postgres:18.6-1
+    build: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: local
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      BOB_DB_PASSWORD: ${BOB_DB_PASSWORD:-local}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - bob-dev-pgdata:/var/lib/postgresql
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   bob-project-dev:
     image: bob-runtime:dev
     container_name: bob-project-dev
@@ -32,3 +55,4 @@ services:
 volumes:
   bob-project-dev:
     external: true
+  bob-dev-pgdata: {}
