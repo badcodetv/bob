@@ -77,7 +77,7 @@ func TestFreshDatabaseIsTheBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := collect(rows, func(r pgx.Row) (string, error) { var n string; return n, r.Scan(&n) })
-	wantMigrations := []string{"001_baseline.sql", "002_worker_labels.sql", "003_schedule_queue.sql", "004_memories.sql", "005_attention.sql"}
+	wantMigrations := []string{"001_baseline.sql", "002_worker_labels.sql", "003_schedule_queue.sql", "004_memories.sql", "005_attention.sql", "006_memory_created_by.sql"}
 	if err != nil || !reflect.DeepEqual(applied, wantMigrations) {
 		t.Errorf("migrations = %v, %v; want %v", applied, err, wantMigrations)
 	}

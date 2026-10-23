@@ -17,7 +17,7 @@ type ChatHit struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// messageText is the readable text of an event, '' for one that is no message: a person's
+// messageText is the readable text of an event, empty for one that is no message: a person's
 // bob.user_message, a Claude reply's text blocks (not a sub-agent's), or a Codex reply in either
 // of its stored formats (app-server item/completed, exec item.completed). It mirrors what the web
 // app's engine converters show as a message.

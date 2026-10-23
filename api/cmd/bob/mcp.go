@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/badcodetv/bob/internal/mcp"
@@ -44,7 +45,11 @@ func (a *app) mcpCaller(r *http.Request) (mcp.Caller, error) {
 		return mcp.Caller{}, mcp.ErrUnauthorized
 	}
 	if project := a.mcpKeyProject(token); project != "" {
-		return mcp.Caller{Project: project, User: "key:" + project, APIBase: a.publicURL}, nil
+		user := "key:" + project
+		if label := clientLabel(r.Header.Get("X-Bob-Client")); label != "" {
+			user += " (" + label + ")"
+		}
+		return mcp.Caller{Project: project, User: user, APIBase: a.publicURL}, nil
 	}
 	id, ok := verifyMCPToken(a.auth.Secret, token)
 	if !ok {
@@ -75,6 +80,19 @@ func (a *app) mcpKeyProject(token string) string {
 	}
 	return found
 }
+
+// clientLabel is an outside client's X-Bob-Client header, which it may send to say who it is
+// ("kai/enc-website", say), kept to a short run of plain characters. The client chooses it, so it
+// is a name, not proof: the key is the credential.
+func clientLabel(h string) string {
+	h = strings.TrimSpace(h)
+	if len(h) > 60 || !clientLabelPattern.MatchString(h) {
+		return ""
+	}
+	return h
+}
+
+var clientLabelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._@/:-]*$`)
 
 // bobWhoami lets an agent ask which chat it is running in: the tools it calls after this all
 // scope to the same project and session, since the token names them, not an argument.

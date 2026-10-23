@@ -42,6 +42,7 @@ type Memory struct {
 	Project          string            `json:"project"`
 	Labels           map[string]string `json:"labels"` // never nil
 	Content          string            `json:"content"`
+	CreatedBy        string            `json:"created_by"`         // who: an email, "schedule:<id>" or "key:<project>"
 	CreatedByWorker  string            `json:"created_by_worker"`  // "" for a plain chat
 	CreatedBySession string            `json:"created_by_session"` // "" once that chat is deleted
 	CreatedAt        time.Time         `json:"created_at"`
@@ -58,11 +59,11 @@ func (e ErrNotCurrent) Error() string {
 	return fmt.Sprintf("memory %s is not current for name=%s: %s is; nothing was written — read it, fold in your change and try again", e.IfCurrent, e.Name, e.Current)
 }
 
-const memoryCols = `id, project, labels, content, created_by_worker, COALESCE(created_by_session::text, ''), created_at`
+const memoryCols = `id, project, labels, content, created_by, created_by_worker, COALESCE(created_by_session::text, ''), created_at`
 
 func scanMemory(row pgx.Row) (Memory, error) {
 	var m Memory
-	err := row.Scan(&m.ID, &m.Project, &m.Labels, &m.Content, &m.CreatedByWorker, &m.CreatedBySession, &m.CreatedAt)
+	err := row.Scan(&m.ID, &m.Project, &m.Labels, &m.Content, &m.CreatedBy, &m.CreatedByWorker, &m.CreatedBySession, &m.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, ErrNotFound
 	}
@@ -94,7 +95,7 @@ type queryRower interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// CreateMemory appends m (Project, Content, Labels, CreatedByWorker, CreatedBySession) with its
+// CreateMemory appends m (Project, Content, Labels, CreatedBy, CreatedByWorker, CreatedBySession) with its
 // embedding, stamped with the store's clock. With ifCurrent set, m must carry a name label, and it
 // is written only while ifCurrent is still the newest unretracted memory of that name; otherwise
 // the error is ErrNotCurrent. Writers using ifCurrent for one name take turns on a lock; a write
@@ -114,9 +115,9 @@ func (s *Store) CreateMemory(ctx context.Context, m Memory, embedding []float32,
 		return Memory{}, fmt.Errorf("memory: %w", err)
 	}
 	insert := func(q queryRower) (Memory, error) {
-		return scanMemory(q.QueryRow(ctx, `INSERT INTO memories (project, labels, content, embedding, created_by_worker, created_by_session, created_at)
-			VALUES ($1, $2, $3, $4::vector, $5, NULLIF($6, '')::uuid, $7) RETURNING `+memoryCols,
-			m.Project, emptyIfNil(m.Labels), m.Content, vectorLiteral(embedding), m.CreatedByWorker, m.CreatedBySession, s.now()))
+		return scanMemory(q.QueryRow(ctx, `INSERT INTO memories (project, labels, content, embedding, created_by, created_by_worker, created_by_session, created_at)
+			VALUES ($1, $2, $3, $4::vector, $5, $6, NULLIF($7, '')::uuid, $8) RETURNING `+memoryCols,
+			m.Project, emptyIfNil(m.Labels), m.Content, vectorLiteral(embedding), m.CreatedBy, m.CreatedByWorker, m.CreatedBySession, s.now()))
 	}
 	ifCurrent = strings.TrimSpace(ifCurrent)
 	if ifCurrent == "" {
@@ -187,6 +188,7 @@ type MemoryHit struct {
 	Labels           map[string]string `json:"labels"`
 	Snippet          string            `json:"snippet"` // the first 500 characters
 	Score            float64           `json:"score"`   // 0 without a query
+	CreatedBy        string            `json:"created_by"`
 	CreatedByWorker  string            `json:"created_by_worker"`
 	CreatedBySession string            `json:"created_by_session"`
 	CreatedAt        time.Time         `json:"created_at"`
@@ -239,7 +241,7 @@ func (s *Store) SearchMemories(ctx context.Context, q MemorySearch) ([]MemoryHit
 		reduce = fmt.Sprintf("ORDER BY f.labels->>'%s', f.created_at DESC, f.id DESC", key)
 	}
 	sql := `WITH filtered AS (SELECT ` + distinct + `f.* FROM memories f WHERE ` + strings.Join(where, " AND ") + ` ` + reduce + `)`
-	hitCols := fmt.Sprintf(`f.id, f.labels, left(f.content, %d), %%s, f.created_by_worker, COALESCE(f.created_by_session::text, ''), f.created_at`, snippetChars)
+	hitCols := fmt.Sprintf(`f.id, f.labels, left(f.content, %d), %%s, f.created_by, f.created_by_worker, COALESCE(f.created_by_session::text, ''), f.created_at`, snippetChars)
 
 	if strings.TrimSpace(q.Query) == "" {
 		sql += ` SELECT ` + fmt.Sprintf(hitCols, "0::float8") + ` FROM filtered f ORDER BY f.created_at DESC, f.id DESC LIMIT ` + arg(limit)
@@ -275,7 +277,7 @@ func (s *Store) scanHits(ctx context.Context, sql string, args []any) ([]MemoryH
 	}
 	return collect(rows, func(row pgx.Row) (MemoryHit, error) {
 		var h MemoryHit
-		err := row.Scan(&h.ID, &h.Labels, &h.Snippet, &h.Score, &h.CreatedByWorker, &h.CreatedBySession, &h.CreatedAt)
+		err := row.Scan(&h.ID, &h.Labels, &h.Snippet, &h.Score, &h.CreatedBy, &h.CreatedByWorker, &h.CreatedBySession, &h.CreatedAt)
 		if h.Labels == nil {
 			h.Labels = map[string]string{}
 		}

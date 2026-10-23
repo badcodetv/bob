@@ -196,7 +196,10 @@ can be reached by any MCP client — Claude Code in a repository on a laptop —
 `https://bob.box.badcode.tv/mcp` with `Authorization: Bearer <key>`. The key names the project. An
 outside caller has no chat, so it gets only the tools that read or remember: `bob_whoami`,
 `worker_list`, `schedule_list`, `memory_*`, `chat_*` and `drive_*`; never the ones that change
-workers or schedules or ask for a person. Its memories have no chat (`created_by_session` empty). In
+workers or schedules or ask for a person. Its memories have no chat (`created_by_session` empty)
+and are signed `created_by: "key:<project>"`; a client may add its own name with an `X-Bob-Client`
+header (`key:enc (bob-website-design)`), a label rather than proof. A chat's memories are signed
+with the person's email or `schedule:<id>`. In
 the repository's `.mcp.json`, with the key in the shell's environment rather than the file:
 
 ```json

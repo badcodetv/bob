@@ -181,6 +181,7 @@ type memoryRecord struct {
 	ID               string            `json:"id"`
 	Labels           map[string]string `json:"labels"`
 	Content          string            `json:"content"`
+	CreatedBy        string            `json:"created_by"`
 	CreatedByWorker  string            `json:"created_by_worker"`
 	CreatedBySession string            `json:"created_by_session"`
 	ChatURL          string            `json:"chat_url"`
@@ -193,6 +194,7 @@ type memoryHit struct {
 	Labels           map[string]string `json:"labels"`
 	Snippet          string            `json:"snippet"`
 	Score            float64           `json:"score"`
+	CreatedBy        string            `json:"created_by"`
 	CreatedByWorker  string            `json:"created_by_worker"`
 	CreatedBySession string            `json:"created_by_session"`
 	ChatURL          string            `json:"chat_url"`
@@ -209,12 +211,12 @@ func (a *app) chatURL(project, session string) string {
 }
 
 func (a *app) memoryRecordOf(m store.Memory) memoryRecord {
-	return memoryRecord{ID: m.ID, Labels: m.Labels, Content: m.Content, CreatedByWorker: m.CreatedByWorker,
+	return memoryRecord{ID: m.ID, Labels: m.Labels, Content: m.Content, CreatedBy: m.CreatedBy, CreatedByWorker: m.CreatedByWorker,
 		CreatedBySession: m.CreatedBySession, ChatURL: a.chatURL(m.Project, m.CreatedBySession), CreatedAt: m.CreatedAt}
 }
 
 func (a *app) memoryHitOf(project string, h store.MemoryHit) memoryHit {
-	return memoryHit{ID: h.ID, Labels: h.Labels, Snippet: h.Snippet, Score: h.Score, CreatedByWorker: h.CreatedByWorker,
+	return memoryHit{ID: h.ID, Labels: h.Labels, Snippet: h.Snippet, Score: h.Score, CreatedBy: h.CreatedBy, CreatedByWorker: h.CreatedByWorker,
 		CreatedBySession: h.CreatedBySession, ChatURL: a.chatURL(project, h.CreatedBySession), CreatedAt: h.CreatedAt}
 }
 
@@ -246,7 +248,7 @@ func (a *app) memoryCreate(ctx context.Context, c mcp.Caller, args json.RawMessa
 	if err != nil {
 		return nil, fmt.Errorf("could not embed this memory, so it was NOT stored (retry rather than continue): %w", err)
 	}
-	m := store.Memory{Project: c.Project, Labels: in.Labels, Content: in.Content, CreatedByWorker: c.Worker, CreatedBySession: c.SessionID}
+	m := store.Memory{Project: c.Project, Labels: in.Labels, Content: in.Content, CreatedBy: c.User, CreatedByWorker: c.Worker, CreatedBySession: c.SessionID}
 	stored, err := a.store.CreateMemory(ctx, m, vec, in.IfCurrent)
 	var notCurrent store.ErrNotCurrent
 	if errors.As(err, &notCurrent) {

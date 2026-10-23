@@ -231,7 +231,24 @@ func TestChatSearch(t *testing.T) {
 	}
 }
 
-// A memory written with a key belongs to the key's project and no chat.
+func TestClientLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                       "",
+		" kai/enc-website ":      "kai/enc-website",
+		"bob-website-design":     "bob-website-design",
+		"x\ny":                   "",
+		"(paren)":                "",
+		strings.Repeat("a", 61):  "",
+		"jack@badcode.tv laptop": "jack@badcode.tv laptop",
+	} {
+		if got := clientLabel(in); got != want {
+			t.Errorf("clientLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A memory written with a key belongs to the key's project and no chat, and says it came from the
+// key, with the client's label when it sends one.
 func TestMemoryCreateWithKey(t *testing.T) {
 	a, _, _, _ := chatToolsApp(t)
 	status, isErr, text := callTool(t, a, wolfKey, "memory_create", `{"content":"Designs live in the website artifact.","labels":{"kind":"note"}}`)
@@ -240,8 +257,17 @@ func TestMemoryCreateWithKey(t *testing.T) {
 	}
 	var m memoryRecord
 	json.Unmarshal([]byte(text), &m)
-	if m.CreatedBySession != "" || m.ChatURL != "" {
+	if m.CreatedBySession != "" || m.ChatURL != "" || m.CreatedBy != "key:wolf" {
 		t.Errorf("memory = %+v", m)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_create","arguments":{"content":"Labelled."}}}`))
+	req.Header.Set("Authorization", "Bearer "+wolfKey)
+	req.Header.Set("X-Bob-Client", "bob-website-design")
+	res := httptest.NewRecorder()
+	a.routes().ServeHTTP(res, req)
+	if !strings.Contains(res.Body.String(), `\"created_by\":\"key:wolf (bob-website-design)\"`) {
+		t.Errorf("labelled memory_create = %s", res.Body)
 	}
 	if _, err := a.store.Memory(t.Context(), "wolf", m.ID); err != nil {
 		t.Errorf("not in wolf: %v", err)

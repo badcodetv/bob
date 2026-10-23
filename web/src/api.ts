@@ -41,7 +41,7 @@ export interface Settings { model: string; effort: string }
 /** One memory, as memory_search and GET .../memories return it: a snippet, not the whole content. */
 export interface Memory {
   id: string; labels: Record<string, string>; snippet: string; score: number
-  created_by_worker: string; created_by_session: string; chat_url: string; created_at: string
+  created_by: string; created_by_worker: string; created_by_session: string; chat_url: string; created_at: string
 }
 /** A request for a person to look at a chat (request_human_attention); closed by a reply or a dismiss. */
 export interface Attention {
