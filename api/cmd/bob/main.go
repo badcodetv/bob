@@ -136,6 +136,7 @@ func main() {
 	}
 	app.mcp.Register(bobWhoami)
 	app.mcp.Register(app.workerTools()...)
+	app.mcp.Register(app.projectPromptTools()...)
 	app.mcp.Register(app.scheduleTools()...)
 	app.mcp.Register(app.driveTools()...)
 	app.mcp.Register(app.memoryTools()...)

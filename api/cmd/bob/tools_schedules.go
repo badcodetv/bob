@@ -18,7 +18,8 @@ import (
 func (a *app) scheduleTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
-			Name: "schedule_create",
+			Name:    "schedule_create",
+			ForKeys: true,
 			Description: "Creates a schedule in this project: a cron-timed job that starts a new session " +
 				"on a worker with a message. " + scheduleNote,
 			InputSchema: scheduleCreateSchema,
@@ -51,7 +52,8 @@ func (a *app) scheduleTools() []mcp.Tool {
 			},
 		},
 		{
-			Name: "schedule_update",
+			Name:    "schedule_update",
+			ForKeys: true,
 			Description: "Changes an existing schedule. Fields left out keep their current value " +
 				"(unlike worker_update). " + scheduleNote,
 			InputSchema: scheduleUpdateSchema,
@@ -111,6 +113,7 @@ func (a *app) scheduleTools() []mcp.Tool {
 		},
 		{
 			Name:        "schedule_delete",
+			ForKeys:     true,
 			Description: "Deletes a schedule from this project.",
 			InputSchema: scheduleDeleteSchema,
 			Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {

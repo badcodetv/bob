@@ -10,13 +10,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/badcodetv/bob/internal/auth"
 	"github.com/badcodetv/bob/internal/mcp"
 	"github.com/badcodetv/bob/internal/store"
 )
 
-// chatTools returns chat_list, chat_read and chat_search: reading the project's chats, for an
-// agent inside Bob and for a client outside it (a project MCP key). They only read; a chat is
-// written to by sending it a message in the web app.
+// chatTools returns chat_list, chat_read and chat_search, reading the project's chats, for an
+// agent inside Bob and for a client outside it (a project MCP key); and chat_create and chat_send,
+// which start a turn, for an outside client only: an agent starting other chats could start
+// itself again, without end.
 func (a *app) chatTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
@@ -45,8 +47,31 @@ func (a *app) chatTools() []mcp.Tool {
 			InputSchema: chatSearchSchema,
 			Call:        a.chatSearch,
 		},
+		{
+			Name:      "chat_create",
+			ForKeys:   true,
+			Available: mcp.Caller.Outside,
+			Description: "Starts a new chat in this project and sends it message, as a person would in the " +
+				"web app: on a worker (it runs with the worker's engine, prompt and tools), or a plain chat " +
+				"on an engine. The agent's turn runs in Bob; this waits up to wait_seconds (default 120) for " +
+				"it and returns its reply, or status \"running\" — then read on with chat_read. " + chatTurnNote,
+			InputSchema: chatCreateSchema,
+			Call:        a.chatCreate,
+		},
+		{
+			Name:      "chat_send",
+			ForKeys:   true,
+			Available: mcp.Caller.Outside,
+			Description: "Sends message to one of this project's chats and waits, like chat_create, for the " +
+				"agent's reply. Refused while the chat is still running a turn. " + chatTurnNote,
+			InputSchema: chatSendSchema,
+			Call:        a.chatSend,
+		},
 	}
 }
+
+const chatTurnNote = "The message is recorded as sent by this MCP key (and the client's X-Bob-Client " +
+	"label); people see it in the web app like any other."
 
 var chatListSchema = json.RawMessage(`{
   "type": "object",
@@ -77,10 +102,35 @@ var chatSearchSchema = json.RawMessage(`{
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+var chatCreateSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "message": {"type": "string", "description": "The first message."},
+    "worker": {"type": "string", "description": "The worker to run (worker_list); leave out for a plain chat."},
+    "engine": {"type": "string", "enum": ["claude", "codex"], "description": "A plain chat's engine; a worker chat uses the worker's."},
+    "model": {"type": "string", "description": "Overrides the worker's model; \"\" for its own."},
+    "effort": {"type": "string", "description": "Overrides the worker's effort; \"\" for its own."},
+    "wait_seconds": {"type": "integer", "description": "How long to wait for the reply: default 120, at most 600, 0 to return at once."}
+  },
+  "required": ["message"]
+}`)
+
+var chatSendSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "chat_id": {"type": "string"},
+    "message": {"type": "string"},
+    "wait_seconds": {"type": "integer", "description": "How long to wait for the reply: default 120, at most 600, 0 to return at once."}
+  },
+  "required": ["chat_id", "message"]
+}`)
+
 const (
-	chatReadChars  = 40000 // a chat_read result holds about this much text, then stops at a message
-	chatToolChars  = 300   // a tool call's arguments or result, when include_tools
-	chatTitleChars = 200
+	chatWaitDefault = 120 * time.Second
+	chatWaitMax     = 600 * time.Second
+	chatReadChars   = 40000 // a chat_read result holds about this much text, then stops at a message
+	chatToolChars   = 300   // a tool call's arguments or result, when include_tools
+	chatTitleChars  = 200
 )
 
 func (a *app) chatList(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
@@ -145,13 +195,7 @@ func (a *app) chatRead(ctx context.Context, c mcp.Caller, args json.RawMessage) 
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
 	}
-	if !uuidPattern.MatchString(in.ChatID) {
-		return nil, errors.New("chat_id must be a chat's id, from chat_list or chat_search")
-	}
-	sess, err := a.store.Session(ctx, in.ChatID)
-	if errors.Is(err, store.ErrNotFound) || err == nil && sess.Project != c.Project {
-		return nil, fmt.Errorf("no chat %s in project %s", in.ChatID, c.Project)
-	}
+	sess, err := a.projectSession(ctx, c, in.ChatID)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +219,7 @@ func (a *app) chatRead(ctx context.Context, c mcp.Caller, args json.RawMessage) 
 		messages = append(messages, lines...)
 	}
 	out := map[string]any{"chat_id": sess.ID, "worker": sess.Worker, "engine": sess.Engine, "created_at": sess.CreatedAt,
-		"url": a.chatURL(c.Project, sess.ID), "messages": messages}
+		"url": a.chatURL(c.Project, sess.ID), "running": a.turnRunning(sess.ID), "messages": messages}
 	if next != 0 {
 		out["next_after"] = next
 	}
@@ -275,6 +319,144 @@ func eventMessages(e store.Event, tools bool) []chatMessage {
 		}
 	}
 	return out
+}
+
+func (a *app) chatCreate(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
+	var in struct {
+		Message, Worker, Engine, Model, Effort string
+		WaitSeconds                            *int `json:"wait_seconds"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(in.Message) == "" {
+		return nil, errors.New("message is required")
+	}
+	wait, err := chatWait(in.WaitSeconds)
+	if err != nil {
+		return nil, err
+	}
+	var sess store.Session
+	if in.Worker == "" {
+		if in.Engine != "claude" && in.Engine != "codex" {
+			return nil, errors.New("a plain chat needs engine: claude or codex (or name a worker)")
+		}
+		if err := settingsError(in.Engine, in.Model, in.Effort); err != nil {
+			return nil, err
+		}
+		sess, err = a.store.CreateSession(ctx, c.Project, nil, "", in.Engine, in.Model, in.Effort)
+	} else {
+		wk, werr := a.store.Worker(ctx, c.Project, in.Worker)
+		if errors.Is(werr, store.ErrNotFound) {
+			return nil, fmt.Errorf("no worker named %q in this project (worker_list)", in.Worker)
+		}
+		if werr != nil {
+			return nil, werr
+		}
+		if err := settingsError(wk.Engine, in.Model, in.Effort); err != nil {
+			return nil, err
+		}
+		sess, err = a.store.CreateSession(ctx, c.Project, &wk.ID, wk.Name, wk.Engine, in.Model, in.Effort)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a.chatTurn(ctx, c, sess, in.Message, wait)
+}
+
+func (a *app) chatSend(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
+	var in struct {
+		ChatID      string `json:"chat_id"`
+		Message     string `json:"message"`
+		WaitSeconds *int   `json:"wait_seconds"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(in.Message) == "" {
+		return nil, errors.New("message is required")
+	}
+	wait, err := chatWait(in.WaitSeconds)
+	if err != nil {
+		return nil, err
+	}
+	sess, err := a.projectSession(ctx, c, in.ChatID)
+	if err != nil {
+		return nil, err
+	}
+	return a.chatTurn(ctx, c, sess, in.Message, wait)
+}
+
+func chatWait(seconds *int) (time.Duration, error) {
+	switch {
+	case seconds == nil:
+		return chatWaitDefault, nil
+	case *seconds < 0 || time.Duration(*seconds)*time.Second > chatWaitMax:
+		return 0, fmt.Errorf("wait_seconds: 0 to %d", int(chatWaitMax.Seconds()))
+	}
+	return time.Duration(*seconds) * time.Second, nil
+}
+
+// chatTurn sends message to sess as the caller and runs the turn in the background, as the web
+// app does; it waits up to wait for the turn to end and returns what the agent replied.
+func (a *app) chatTurn(ctx context.Context, c mcp.Caller, sess store.Session, message string, wait time.Duration) (any, error) {
+	userEvent, run, err := a.startTurn(ctx, sess, auth.User{Email: c.User, Name: c.User}, message)
+	if errors.Is(err, errBusy) {
+		return nil, errors.New("this chat is still running a turn: wait for it (chat_read shows running) and send again")
+	}
+	if err != nil {
+		return nil, err
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = run()
+	}()
+	out := map[string]any{"chat_id": sess.ID, "url": a.chatURL(c.Project, sess.ID), "message_event_id": userEvent.ID}
+	// The turn runs on whether or not anyone waits: a caller that gives up still has the chat.
+	select {
+	case <-done:
+	case <-time.After(wait):
+		out["status"] = "running"
+		return out, nil
+	case <-ctx.Done():
+		out["status"] = "running"
+		return out, nil
+	}
+	events, err := a.store.Events(ctx, sess.ID, userEvent.ID)
+	if err != nil {
+		return nil, err
+	}
+	status, reply := "done", []string{}
+	for _, e := range events {
+		for _, m := range eventMessages(e, false) {
+			if m.Role == "error" {
+				status = "failed"
+			}
+			reply = append(reply, m.Text)
+		}
+	}
+	out["status"], out["reply"] = status, strings.Join(reply, "\n\n")
+	return out, nil
+}
+
+// projectSession is the caller's project's chat id, or an error a model can act on.
+func (a *app) projectSession(ctx context.Context, c mcp.Caller, id string) (store.Session, error) {
+	if !uuidPattern.MatchString(id) {
+		return store.Session{}, errors.New("chat_id must be a chat's id, from chat_list or chat_search")
+	}
+	sess, err := a.store.Session(ctx, id)
+	if errors.Is(err, store.ErrNotFound) || err == nil && sess.Project != c.Project {
+		return store.Session{}, fmt.Errorf("no chat %s in project %s", id, c.Project)
+	}
+	return sess, err
+}
+
+func (a *app) turnRunning(sessionID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.turns[sessionID]
+	return ok
 }
 
 func (a *app) chatSearch(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {

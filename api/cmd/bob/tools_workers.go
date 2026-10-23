@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/badcodetv/bob/internal/labels"
@@ -19,7 +20,8 @@ import (
 func (a *app) workerTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
-			Name: "worker_create",
+			Name:    "worker_create",
+			ForKeys: true,
 			Description: "Creates a new worker in this project: an agent with its own engine, model, prompt " +
 				"and tools that chats can be started with." + workerNote,
 			InputSchema: workerCreateSchema,
@@ -40,7 +42,8 @@ func (a *app) workerTools() []mcp.Tool {
 			},
 		},
 		{
-			Name: "worker_update",
+			Name:    "worker_update",
+			ForKeys: true,
 			Description: "Replaces an existing worker's engine, model, effort, tools and prompt. Fields left " +
 				"out are cleared, not kept — send every field you want the worker to keep." + workerNote,
 			InputSchema: workerUpdateSchema,
@@ -101,6 +104,7 @@ func (a *app) workerTools() []mcp.Tool {
 		},
 		{
 			Name:        "worker_delete",
+			ForKeys:     true,
 			Description: "Deletes a worker from this project. Its chats stay readable but can no longer be resumed; its schedules are deleted." + workerNote,
 			InputSchema: workerDeleteSchema,
 			Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
@@ -211,3 +215,66 @@ type workerSummary struct {
 	Labels    map[string]string `json:"labels"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
+
+// projectPromptTools returns project_prompt_get and project_prompt_set: the prompt every worker
+// and plain chat of the project shares, with its history, as the web app's Project prompt page.
+func (a *app) projectPromptTools() []mcp.Tool {
+	return []mcp.Tool{
+		{
+			Name:    "project_prompt_get",
+			ForKeys: true,
+			Description: "Returns this project's prompt (shared by all its workers and plain chats, after Bob's " +
+				"environment note and before a worker's own prompt) and its recent history: who changed it, when and why.",
+			Call: func(ctx context.Context, c mcp.Caller, _ json.RawMessage) (any, error) {
+				p, err := a.store.Project(ctx, c.Project)
+				if err != nil {
+					return nil, err
+				}
+				versions, err := a.store.ProjectPromptVersions(ctx, c.Project)
+				if err != nil {
+					return nil, err
+				}
+				if len(versions) > 10 {
+					versions = versions[:10]
+				}
+				return map[string]any{"prompt": p.Prompt, "versions": versions}, nil
+			},
+		},
+		{
+			Name:    "project_prompt_set",
+			ForKeys: true,
+			Description: "Replaces this project's prompt with prompt, in full: read it with project_prompt_get " +
+				"first and send the whole new text. It takes effect on every chat's next message. why is " +
+				"recorded in the prompt's history.",
+			InputSchema: projectPromptSetSchema,
+			Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
+				var in struct {
+					Prompt *string `json:"prompt"`
+					Why    string  `json:"why"`
+				}
+				if err := json.Unmarshal(args, &in); err != nil {
+					return nil, err
+				}
+				if in.Prompt == nil {
+					return nil, errors.New("prompt is required: the whole new text (\"\" to clear it)")
+				}
+				if strings.TrimSpace(in.Why) == "" {
+					return nil, errors.New("why is required")
+				}
+				if err := a.store.SetProjectPrompt(ctx, c.Project, *in.Prompt, c.User, in.Why); err != nil {
+					return nil, err
+				}
+				return map[string]string{"prompt": *in.Prompt}, nil
+			},
+		},
+	}
+}
+
+var projectPromptSetSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "prompt": {"type": "string", "description": "The whole new project prompt."},
+    "why": {"type": "string", "description": "Why it changed; kept in its history."}
+  },
+  "required": ["prompt", "why"]
+}`)

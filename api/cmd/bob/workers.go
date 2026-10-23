@@ -54,15 +54,22 @@ func effortListFor(engine string) string {
 // validSettings checks the model and effort a session (or its override) runs with, for the
 // engine it runs on.
 func validSettings(w http.ResponseWriter, engine, model, effort string) bool {
+	if err := settingsError(engine, model, effort); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// settingsError says what is wrong with a model and effort for engine, or nil.
+func settingsError(engine, model, effort string) error {
 	switch {
 	case !modelName.MatchString(model):
-		http.Error(w, "model: letters, digits and . _ : / [ ] - only", http.StatusBadRequest)
+		return errors.New("model: letters, digits and . _ : / [ ] - only")
 	case effort != "" && !effortsFor(engine)[effort]:
-		http.Error(w, "effort: "+effortListFor(engine), http.StatusBadRequest)
-	default:
-		return true
+		return errors.New("effort: " + effortListFor(engine))
 	}
-	return false
+	return nil
 }
 
 func (a *app) listWorkers(w http.ResponseWriter, r *http.Request) {

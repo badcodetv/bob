@@ -107,6 +107,7 @@ func testDB(t *testing.T, st *store.Store) *pgx.Conn {
 type fakeRuntime struct {
 	mu         sync.Mutex
 	turnError  string
+	reply      string // when set, each turn answers it as a Claude reply
 	hold       chan struct{}
 	started    chan string // session ids, as turns start
 	turns      []runtime.TurnRequest
@@ -122,7 +123,7 @@ func (f *fakeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var body runtime.TurnRequest
 		json.NewDecoder(r.Body).Decode(&body)
 		f.turns = append(f.turns, body)
-		hold, turnError := f.hold, f.turnError
+		hold, turnError, reply := f.hold, f.turnError, f.reply
 		if f.started != nil {
 			f.started <- body.SessionID
 		}
@@ -131,6 +132,9 @@ func (f *fakeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			<-hold
 		}
 		fmt.Fprintf(w, `{"engine":"claude","event":{"type":"system","subtype":"init","session_id":"h-%s"}}`+"\n", body.SessionID)
+		if reply != "" {
+			fmt.Fprintf(w, `{"engine":"claude","event":{"type":"assistant","message":{"content":[{"type":"text","text":%q}]}}}`+"\n", reply)
+		}
 		fmt.Fprintf(w, `{"done":true,"harness_session_id":"h-%s","error":%q}`+"\n", body.SessionID, turnError)
 		f.mu.Lock()
 	default:

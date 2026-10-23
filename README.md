@@ -193,21 +193,31 @@ and the account's email; store it as `BOB_DRIVE_TOKEN_<NAME>`. A project with no
 ## Bob's tools
 
 Every chat is given Bob's MCP server, `/mcp` on the API (JSON-RPC over streamable HTTP, scoped to
-the calling chat's project): `worker_create/update/list/delete`, `schedule_create/update/list/delete`
-(agents may manage schedules even though the HTTP schedule routes are admin-only),
-`memory_create/search/get/current`, `chat_list/read/search`, `drive_search/list/read/fetch` (when
-the project has a Drive token) and `request_human_attention`.
+the calling chat's project): `worker_create/update/list/delete`, `project_prompt_get/set`,
+`schedule_create/update/list/delete` (agents may manage schedules even though the HTTP schedule
+routes are admin-only), `memory_create/search/get/current`, `chat_list/read/search`,
+`drive_search/list/read/fetch` (when the project has a Drive token) and `request_human_attention`.
 
 **From outside Bob.** A project with a `BOB_MCP_KEY_<NAME>` (32+ characters, `openssl rand -hex 32`)
 can be reached by any MCP client — Claude Code in a repository on a laptop — at
-`https://bob.box.badcode.tv/mcp` with `Authorization: Bearer <key>`. The key names the project. An
-outside caller has no chat, so it gets only the tools that read or remember: `bob_whoami`,
-`worker_list`, `schedule_list`, `memory_*`, `chat_*` and `drive_*`; never the ones that change
-workers or schedules or ask for a person. Its memories have no chat (`created_by_session` empty)
-and are signed `created_by: "key:<project>"`; a client may add its own name with an `X-Bob-Client`
-header (`key:enc (bob-website-design)`), a label rather than proof. A chat's memories are signed
-with the person's email or `schedule:<id>`. In
-the repository's `.mcp.json`, with the key in the shell's environment rather than the file:
+`https://bob.box.badcode.tv/mcp` with `Authorization: Bearer <key>`. The key names the project and
+can do what a person in the web app can: everything above except `request_human_attention` (it has
+no chat to pause), plus **`chat_create`** (a new chat on a worker, or a plain chat on an engine,
+with a first message) and **`chat_send`** (a message to an existing chat). Both run the agent's
+turn in Bob and wait up to `wait_seconds` (default 120) for its reply; a longer turn answers
+`status: "running"` and goes on, and `chat_read` shows it (`running`, then the reply). Agents inside
+Bob do not get these two, so a chat cannot start chats that start chats.
+
+Everything a key does is signed `key:<project>`: the memories it writes (`created_by`), the worker
+and project-prompt history (`by`, with the required *why*), and its chat messages (`user_email`,
+which the turn also uses as the git author). A client may add its own name with an `X-Bob-Client`
+header (`key:enc (bob-website-design)`), a label rather than proof. A key's memories have no chat
+(`created_by_session` empty); a chat's are signed with the person's email or `schedule:<id>`.
+
+To connect a repository, keep the key out of it: `claude mcp add --scope local --transport http bob
+https://bob.box.badcode.tv/mcp --header "Authorization: Bearer <key>" --header "X-Bob-Client:
+<name>"` stores it in your own `~/.claude.json` for that folder only. Or a git-ignored `.mcp.json`
+reading the key from the shell's environment:
 
 ```json
 { "mcpServers": { "bob": { "type": "http", "url": "https://bob.box.badcode.tv/mcp",
