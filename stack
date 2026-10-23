@@ -220,16 +220,16 @@ publish)
   ;;
 
 publish-postgres)
-  image="$(awk '/^  postgres:/{f=1} f && /image:/{print $2; exit}' deploy/compose.yml)"
-  [ -n "$image" ] || die "no postgres image in deploy/compose.yml"
-  grep -qF "image: $image" "$COMPOSE_DEV" || die "deploy/compose.dev.yml does not pin $image — keep the two the same"
+  # The laptop's Postgres image (the box uses the shared Postgres since 2026-10-23).
+  image="$(awk '/^  postgres:/{f=1} f && /image:/{print $2; exit}' "$COMPOSE_DEV")"
+  [ -n "$image" ] || die "no postgres image in $COMPOSE_DEV"
   if docker manifest inspect "$image" >/dev/null 2>&1; then
-    die "$image is already published. Pinned tags are never overwritten: bump the -N suffix in both compose files"
+    die "$image is already published. Pinned tags are never overwritten: bump the -N suffix in $COMPOSE_DEV"
   fi
   say "building $image"
   docker build -t "$image" deploy/postgres
   docker push "$image"
-  say "published $image — a deploy carrying the new tag RESTARTS Bob's Postgres, once"
+  say "published $image — the laptop's Postgres; ./stack restart picks it up"
   ;;
 
 deploy)
