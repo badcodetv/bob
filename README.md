@@ -3,6 +3,8 @@
 Runs AI agent sessions for BadCode: one container per project, the labs' own harnesses inside it,
 workers and memory and conversations in Postgres, work in git. Read [DESIGN.md](DESIGN.md) first.
 
+> **Runs on BadCode's box** (`box.badcode.tv`), deployed from here with `./stack deploy`. How the box works, and how this app moves onto it, is in the private ops repository `binocarlos/ops` (`~/projects/badcode/ops`). Details: [`CLAUDE.md`](CLAUDE.md), "Where this runs".
+
 Bob does not start containers and has no Docker socket. Each project's container is declared in
 the deploy's compose file and Bob talks to it over HTTP, by name. So **a project is deployment
 configuration**: adding one, or changing one of its secrets, is a deploy.
