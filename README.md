@@ -66,14 +66,21 @@ publishes port 8100 on `127.0.0.1`, because a Bob running on the host cannot res
 names; `./stack start` sets `BOB_PROJECTS=dev` and `BOB_RUNTIME_HOSTS=dev=127.0.0.1:8100` for the
 API. The container reaches the API at `http://host.docker.internal:8070`.
 
-**Postgres**: on the laptop, Bob's own — the `postgres` service in `deploy/compose.dev.yml` (on
-`127.0.0.1:5432`), built from `deploy/postgres/`. On the box, the database `bob` in the box's one
-shared Postgres, which the ops repository runs and backs up (`./stack db create bob …` there writes
-`BOB_DATABASE_URL` into `.env.box`). Its first start creates role `app_bob`, database `bob` and the `vector` extension
-that memory needs (`deploy/postgres/initdb/10-bob.sh`). After a schema reset, which drops the
-extension, recreate it as the superuser: `./stack psql -c 'CREATE EXTENSION IF NOT EXISTS vector'`.
-The image tag is pinned in both compose files, never `${TAG}`, so a deploy does not restart the
-database; change `deploy/postgres/` → bump the `-N` suffix → `./stack publish-postgres`.
+**Postgres** is in two places, and only the laptop's belongs to Bob:
+
+- **On the box** (since 2026-10-23): the database `bob`, role `app_bob`, in the box's **one shared
+  Postgres 18**, which the ops repository runs (`apps/postgres`) and backs up. The API reaches it as
+  `postgres:5432` on the `box-db` network. Ops creates the database and writes and rotates
+  `BOB_DATABASE_URL` in `.env.box` (`./stack db create|password bob --env-file
+  ~/projects/badcode/bob/.env.box --url-var BOB_DATABASE_URL`, run in ops). The `vector` extension
+  that memory needs was created there as the superuser. Bob's schema migrations run when the API
+  starts, as anywhere.
+- **On the laptop**: Bob's own, the `postgres` service in `deploy/compose.dev.yml` (on
+  `127.0.0.1:5432`), built from `deploy/postgres/`. Its first start creates role `app_bob`,
+  database `bob` and `vector` (`deploy/postgres/initdb/10-bob.sh`). After a schema reset, which
+  drops the extension, recreate it as the superuser: `./stack psql -c 'CREATE EXTENSION IF NOT
+  EXISTS vector'`. Its image tag is pinned, never `${TAG}`; change `deploy/postgres/` → bump the
+  `-N` suffix → `./stack publish-postgres`.
 
 Sign in with Google (an account in `BOB_PROJECT_MAP`), open `dev`, and start a chat.
 
@@ -391,12 +398,17 @@ secret:** edit `.env.box` and deploy — only the containers whose environment c
 `GET /api/busy` first: restarting a container cuts off a running turn, and a scheduled run cut off
 that way is recorded failed and not retried.
 
-**Backups — three things, not one.** Postgres holds the record (workers and their history,
-conversations, schedules, memory, attention requests): back it up properly, off the box. Each
-`bob-project-<name>` volume holds that project's work folder, skills and harness state, including
-Codex's login — a cache by design, but restoring one means restoring to the *same path* with
-`tar --numeric-owner`, because git checkouts may store absolute paths. `deploy/compose.yml` is in
-this repository; `.env.box` is not, so keep a copy where the other production secrets are.
+**Backups — three things, not one** (as of 2026-10-23):
+
+| What | Where on the box | Backed up by |
+| --- | --- | --- |
+| **The record**: workers and their history, conversations, schedules, memory, attention requests | database `bob` in the shared Postgres | **the ops repository**: pgBackRest → Google Cloud Storage, stanza `main`, continuously (every change within 60 s, plus hourly, daily and weekly backups), restorable to the minute for 4 weeks. Restoring is done from ops, never from here |
+| `compose.yml`, `.env`, `release.env` | `/srv/apps/bob/` | ops' nightly restic copy of `/srv/apps` |
+| **Each project's volume**: work folder, skills, harness state, Codex's login | `bob-project-<name>`, a Docker volume under `/srv/docker` | **nothing**. A cache by design: the work is pushed to git, and Codex can be logged in again. Skills a chat added, and anything not pushed, are lost with the volume. Restoring a copy you made yourself means restoring to the *same path* with `tar --numeric-owner`, because git checkouts may store absolute paths |
+
+`.env.box` is also in Kai's password manager (entry "OVH box"), the master copy. The old private
+Postgres Bob ran from 2026-10-19 to 2026-10-23 is kept on disk at `/srv/apps/bob/pgdata` until
+about 2026-11-20 as a fallback, then deleted from ops; its own stanza no longer runs.
 
 ⚠️ **Never rename a project.** Its name is the container name, the volume name and the
 `projects.name` primary key.

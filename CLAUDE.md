@@ -15,7 +15,7 @@ It replaces the old Google Kubernetes cluster.
 - **Data:** the database `bob` in the box's **one shared Postgres 18** (ops `apps/postgres`), reached
   as `postgres:5432` on the `box-db` network. `BOB_DATABASE_URL` in `.env.box` is written and rotated
   from ops: `./stack db create|password bob --env-file ~/projects/badcode/bob/.env.box --url-var
-  BOB_DATABASE_URL`. The box backs it up. On the laptop, `deploy/compose.dev.yml` runs its own Postgres.
+  BOB_DATABASE_URL`. Ops backs it up (pgBackRest, stanza `main`, to Google Cloud Storage); project volumes are not backed up (README, "Backups"). On the laptop, `deploy/compose.dev.yml` runs its own Postgres.
 - **Secrets:** its secrets are git-ignored in **this** repository: `.env.box` (the box's) and `.env` (the laptop's). The master copy is Kai's password manager, entry "OVH box". Never put them in ops, never commit them.
 - **The box itself** (Caddy, backups, the map of every app, the switch playbook) is documented in the
   private ops repository `binocarlos/ops`, cloned at `~/projects/badcode/ops`. Read its `CLAUDE.md`
