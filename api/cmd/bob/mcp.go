@@ -36,11 +36,15 @@ func verifyMCPToken(secret []byte, token string) (sessionID string, ok bool) {
 }
 
 // mcpCaller is /mcp's auth: the chat the bearer token names, and from it the project, worker and
-// the person (or schedule) whose message the agent is working on.
+// the person (or schedule) whose message the agent is working on. A project's MCP key is the other
+// credential: an outside caller with no chat, who reaches Bob at its public URL.
 func (a *app) mcpCaller(r *http.Request) (mcp.Caller, error) {
 	token, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !found {
 		return mcp.Caller{}, mcp.ErrUnauthorized
+	}
+	if project := a.mcpKeyProject(token); project != "" {
+		return mcp.Caller{Project: project, User: "key:" + project, APIBase: a.publicURL}, nil
 	}
 	id, ok := verifyMCPToken(a.auth.Secret, token)
 	if !ok {
@@ -60,11 +64,24 @@ func (a *app) mcpCaller(r *http.Request) (mcp.Caller, error) {
 	return mcp.Caller{Project: sess.Project, SessionID: sess.ID, Worker: sess.Worker, User: user, APIBase: "http://" + r.Host}, nil
 }
 
+// mcpKeyProject is the project whose MCP key token is, or "". Every key is compared, in constant
+// time, so how long the answer takes says nothing about which one nearly matched.
+func (a *app) mcpKeyProject(token string) string {
+	found := ""
+	for project, key := range a.mcpKeys {
+		if hmac.Equal([]byte(token), []byte(key)) {
+			found = project
+		}
+	}
+	return found
+}
+
 // bobWhoami lets an agent ask which chat it is running in: the tools it calls after this all
 // scope to the same project and session, since the token names them, not an argument.
 var bobWhoami = mcp.Tool{
 	Name:        "bob_whoami",
-	Description: "Returns the project, chat and worker this call is running in, and who it is running for.",
+	ForKeys:     true,
+	Description: "Returns the project, chat and worker this call is running in, and who it is running for (\"key:<project>\" and no chat when called from outside Bob with the project's MCP key).",
 	Call: func(_ context.Context, c mcp.Caller, _ json.RawMessage) (any, error) {
 		return map[string]string{"project": c.Project, "session": c.SessionID, "worker": c.Worker, "user": c.User}, nil
 	},

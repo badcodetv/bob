@@ -45,6 +45,7 @@ type app struct {
 	runtime   containers
 	drive     map[string]*drive.Client // project → Drive client; absent = no Drive tools for it
 	mcp       *mcp.Server              // the tools agents call back into Bob with (POST /mcp)
+	mcpKeys   map[string]string        // project → BOB_MCP_KEY_<NAME>, for clients outside Bob
 	embed     embed.Embedder           // memory embeddings (OPENAI_API_KEY); nil in tests that need none
 	now       func() time.Time
 	// attentionWebhook overrides how a project's attention webhook is found (default: the

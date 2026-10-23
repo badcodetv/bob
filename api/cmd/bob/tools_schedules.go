@@ -91,6 +91,7 @@ func (a *app) scheduleTools() []mcp.Tool {
 		},
 		{
 			Name:        "schedule_list",
+			ForKeys:     true,
 			Description: "Lists this project's schedules, with when each next fires and how its last run went.",
 			Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (any, error) {
 				list, err := a.store.Schedules(ctx, c.Project)

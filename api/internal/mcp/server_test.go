@@ -10,14 +10,15 @@ import (
 	"testing"
 )
 
-// newTestServer serves two tools: echo (always there) and secret (only for worker "wolfie"), plus
-// fails, whose call errors. Its auth lets "Bearer good" in as worker "wolfie" and "Bearer plain" in
-// as a plain chat; anything else is refused.
+// newTestServer serves two tools: echo (always there, outside callers too) and secret (only for
+// worker "wolfie"), plus fails, whose call errors. Its auth lets "Bearer good" in as worker
+// "wolfie", "Bearer plain" in as a plain chat and "Bearer key" in as an outside caller holding
+// wolf's key; anything else is refused.
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	s := New()
 	s.Register(
-		Tool{Name: "echo", Description: "Echoes its arguments and who called.",
+		Tool{Name: "echo", Description: "Echoes its arguments and who called.", ForKeys: true,
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"say":{"type":"string"}}}`),
 			Call: func(_ context.Context, c Caller, args json.RawMessage) (any, error) {
 				var a struct{ Say string }
@@ -36,6 +37,8 @@ func newTestServer(t *testing.T) http.Handler {
 			return Caller{Project: "wolf", SessionID: "s1", Worker: "wolfie"}, nil
 		case "Bearer plain":
 			return Caller{Project: "wolf", SessionID: "s2"}, nil
+		case "Bearer key":
+			return Caller{Project: "wolf", User: "key:wolf"}, nil
 		case "Bearer gone":
 			return Caller{}, ErrNoSession
 		}
@@ -144,6 +147,13 @@ func TestToolsListOnlyAvailable(t *testing.T) {
 	}
 	if got := toolNames(t, h, "plain"); got != "echo fails" {
 		t.Errorf("a plain chat's tools = %q", got)
+	}
+	if got := toolNames(t, h, "key"); got != "echo" {
+		t.Errorf("an outside caller's tools = %q", got)
+	}
+	r := rpc(t, h, "key", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"fails"}}`)
+	if r.Error == nil || r.Error.Code != invalidParams {
+		t.Errorf("outside caller calling fails: %+v", r.Error)
 	}
 }
 

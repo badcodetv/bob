@@ -61,7 +61,8 @@ func (a *app) workerTools() []mcp.Tool {
 			},
 		},
 		{
-			Name: "worker_list",
+			Name:    "worker_list",
+			ForKeys: true,
 			Description: "Lists this project's workers. With name, returns that one worker in full, " +
 				"including its prompt. Without name, returns a summary of every worker (no prompt).",
 			InputSchema: workerListSchema,

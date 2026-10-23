@@ -96,6 +96,11 @@ services:
       BOB_DRIVE_CLIENT_SECRET: ${BOB_DRIVE_CLIENT_SECRET:-}
       BOB_DRIVE_TOKEN_ENC: ${BOB_DRIVE_TOKEN_ENC:-}
       BOB_DRIVE_TOKEN_MARKETING: ${BOB_DRIVE_TOKEN_MARKETING:-}
+      # Optional: a project's MCP key, for Claude Code (or any MCP client) outside Bob to use that
+      # project's tools at https://bob.box.badcode.tv/mcp. Empty = not reachable from outside.
+      BOB_MCP_KEY_ENC: ${BOB_MCP_KEY_ENC:-}
+      BOB_MCP_KEY_MARKETING: ${BOB_MCP_KEY_MARKETING:-}
+      BOB_MCP_KEY_WOLF: ${BOB_MCP_KEY_WOLF:-}
     depends_on:
       postgres:
         condition: service_healthy

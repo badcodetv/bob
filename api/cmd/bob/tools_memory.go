@@ -27,24 +27,28 @@ func (a *app) memoryTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
 			Name:        "memory_create",
+			ForKeys:     true,
 			Description: memoryCreateDescription,
 			InputSchema: memoryCreateSchema,
 			Call:        a.memoryCreate,
 		},
 		{
 			Name:        "memory_search",
+			ForKeys:     true,
 			Description: memorySearchDescription,
 			InputSchema: memorySearchSchema,
 			Call:        a.memorySearch,
 		},
 		{
 			Name:        "memory_get",
+			ForKeys:     true,
 			Description: memoryGetDescription,
 			InputSchema: memoryGetSchema,
 			Call:        a.memoryGet,
 		},
 		{
 			Name:        "memory_current",
+			ForKeys:     true,
 			Description: memoryCurrentDescription,
 			InputSchema: memoryCurrentSchema,
 			Call:        a.memoryCurrent,

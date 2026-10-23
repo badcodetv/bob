@@ -1,8 +1,10 @@
 // Package mcp is Bob's MCP server: the tools an agent calls back into Bob with, served by the API
 // as JSON-RPC 2.0 over streamable HTTP (one request per POST, one plain JSON response; no SSE).
 //
-// Who calls is decided by the auth func the API passes to Handler, from the chat's bearer token,
-// never from a tool argument: no tool takes a project, the token is the scope.
+// Who calls is decided by the auth func the API passes to Handler, from the bearer token, never
+// from a tool argument: no tool takes a project, the token is the scope. The token is a chat's
+// (an agent inside Bob) or a project's MCP key (a client outside Bob, e.g. Claude Code on a
+// laptop); an outside caller has no chat and sees only the tools marked ForKeys.
 package mcp
 
 import (
@@ -28,11 +30,12 @@ const (
 	internalError  = -32603
 )
 
-// Caller is the chat calling a tool.
+// Caller is the chat calling a tool, or, with SessionID "", an outside client holding the
+// project's MCP key.
 type Caller struct {
 	Project, SessionID string
 	Worker             string // the session's worker name; '' for a plain chat
-	User               string // email of the session's latest bob.user_message, or "schedule:<id>"
+	User               string // email of the session's latest bob.user_message, "schedule:<id>", or "key:<project>"
 	APIBase            string // "http://" + the /mcp request's Host header: how this container reaches the API
 }
 
@@ -42,14 +45,23 @@ type Tool struct {
 	Name, Description string
 	InputSchema       json.RawMessage   // nil = no arguments
 	Available         func(Caller) bool // nil = always
+	ForKeys           bool              // also offered to an outside caller (no chat)
 	Call              func(ctx context.Context, c Caller, args json.RawMessage) (any, error)
 }
 
-func (t *Tool) availableTo(c Caller) bool { return t.Available == nil || t.Available(c) }
+// Outside is whether the caller is a client outside Bob, holding the project's MCP key.
+func (c Caller) Outside() bool { return c.SessionID == "" }
+
+func (t *Tool) availableTo(c Caller) bool {
+	if c.Outside() && !t.ForKeys {
+		return false
+	}
+	return t.Available == nil || t.Available(c)
+}
 
 // Errors an auth func returns: ErrUnauthorized → 401, ErrNoSession → 404, anything else → 500.
 var (
-	ErrUnauthorized = errors.New("missing or bad MCP token")
+	ErrUnauthorized = errors.New("missing or bad MCP token or key")
 	ErrNoSession    = errors.New("this chat no longer exists")
 )
 

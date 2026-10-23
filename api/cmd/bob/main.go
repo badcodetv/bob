@@ -18,6 +18,10 @@
 //	BOB_DRIVE_TOKEN_<NAME>  optional, one per project: that project's Drive refresh token
 //	                   (scripts/drive-token). <NAME> as BOB_RUNTIME_TOKEN_<NAME> above. A project
 //	                   with none set has no Drive client and no drive_* MCP tools.
+//	BOB_MCP_KEY_<NAME> optional, one per project: lets a client outside Bob (Claude Code on a
+//	                   laptop) use that project's MCP tools at /mcp as "Bearer <key>". <NAME> as
+//	                   BOB_RUNTIME_TOKEN_<NAME> above; 32+ characters (openssl rand -hex 32).
+//	                   A project with none set cannot be reached from outside.
 //	OPENAI_API_KEY     embeddings for memory search (required)
 //	BOB_EMBEDDING_MODEL OpenAI embedding model (default text-embedding-3-small; changing it after
 //	                   memories exist worsens search over the old ones — they are not re-embedded)
@@ -110,6 +114,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	keys, err := mcpKeysFromEnv(os.Getenv, names)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	app := &app{
 		auth:      signIn,
 		access:    people,
@@ -121,6 +130,7 @@ func main() {
 		drive:     driveClients,
 		embed:     embedder,
 		mcp:       mcp.New(),
+		mcpKeys:   keys,
 		turns:     map[string]context.CancelFunc{},
 		now:       time.Now,
 	}
@@ -129,6 +139,7 @@ func main() {
 	app.mcp.Register(app.scheduleTools()...)
 	app.mcp.Register(app.driveTools()...)
 	app.mcp.Register(app.memoryTools()...)
+	app.mcp.Register(app.chatTools()...)
 	app.mcp.Register(app.attentionTools()...)
 	app.projectOf = app.storeProjectOf
 	go app.scheduleLoop(ctx)
@@ -201,6 +212,30 @@ func driveClientsFromEnv(ctx context.Context, getenv func(string) string, projec
 		clients[name] = c
 	}
 	return clients, nil
+}
+
+// mcpKeyVar is the environment variable holding a project's MCP key.
+func mcpKeyVar(project string) string {
+	return "BOB_MCP_KEY_" + strings.ToUpper(strings.ReplaceAll(project, "-", "_"))
+}
+
+// mcpKeysFromEnv reads each project's BOB_MCP_KEY_<NAME>, if set: project → key. The keys must
+// differ, since a key alone names its project.
+func mcpKeysFromEnv(getenv func(string) string, projects []string) (map[string]string, error) {
+	keys, seen := map[string]string{}, map[string]string{}
+	for _, name := range projects {
+		key := getenv(mcpKeyVar(name))
+		switch {
+		case key == "":
+			continue
+		case len(key) < 32:
+			return nil, fmt.Errorf("%s is too short: 32+ characters (openssl rand -hex 32)", mcpKeyVar(name))
+		case seen[key] != "":
+			return nil, fmt.Errorf("%s is the same as %s: each project needs its own key", mcpKeyVar(name), mcpKeyVar(seen[key]))
+		}
+		keys[name], seen[key] = key, name
+	}
+	return keys, nil
 }
 
 // embedderFromEnv builds the OpenAI embedder memory search needs. There is no keyword-only

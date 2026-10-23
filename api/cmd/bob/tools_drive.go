@@ -24,6 +24,7 @@ func (a *app) driveTools() []mcp.Tool {
 	return []mcp.Tool{
 		{
 			Name:        "drive_search",
+			ForKeys:     true,
 			Description: "Full-text searches this project's Google Drive, most recently modified first.",
 			InputSchema: driveSearchSchema,
 			Available:   available,
@@ -57,7 +58,8 @@ func (a *app) driveTools() []mcp.Tool {
 			},
 		},
 		{
-			Name: "drive_list",
+			Name:    "drive_list",
+			ForKeys: true,
 			Description: "Lists one page of this project's Google Drive: the children of folder_id, or, when " +
 				"folder_id is left out, My Drive's root and everything shared with the caller.",
 			InputSchema: driveListSchema,
@@ -84,7 +86,8 @@ func (a *app) driveTools() []mcp.Tool {
 			},
 		},
 		{
-			Name: "drive_read",
+			Name:    "drive_read",
+			ForKeys: true,
 			Description: "Reads a Drive file as text: Google Docs export as markdown, Sheets as CSV (first " +
 				"sheet only), Slides as plain text, and any text/* or application/json file as its own bytes. " +
 				"Anything else errors, telling you to use drive_fetch instead. offset/limit page through the " +
@@ -135,7 +138,8 @@ func (a *app) driveTools() []mcp.Tool {
 			},
 		},
 		{
-			Name: "drive_fetch",
+			Name:    "drive_fetch",
+			ForKeys: true,
 			Description: "Mints a short-lived signed URL to download a Drive file's raw bytes (for files " +
 				"drive_read can't show as text). Use curl -fsSL \"$url\" -o <file> — the URL expires in 10 minutes.",
 			InputSchema: driveFetchSchema,

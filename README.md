@@ -187,8 +187,21 @@ and the account's email; store it as `BOB_DRIVE_TOKEN_<NAME>`. A project with no
 Every chat is given Bob's MCP server, `/mcp` on the API (JSON-RPC over streamable HTTP, scoped to
 the calling chat's project): `worker_create/update/list/delete`, `schedule_create/update/list/delete`
 (agents may manage schedules even though the HTTP schedule routes are admin-only),
-`memory_create/search/get/current`, `drive_search/list/read/fetch` (when the project has a Drive
-token) and `request_human_attention`.
+`memory_create/search/get/current`, `chat_list/read/search`, `drive_search/list/read/fetch` (when
+the project has a Drive token) and `request_human_attention`.
+
+**From outside Bob.** A project with a `BOB_MCP_KEY_<NAME>` (32+ characters, `openssl rand -hex 32`)
+can be reached by any MCP client — Claude Code in a repository on a laptop — at
+`https://bob.box.badcode.tv/mcp` with `Authorization: Bearer <key>`. The key names the project. An
+outside caller has no chat, so it gets only the tools that read or remember: `bob_whoami`,
+`worker_list`, `schedule_list`, `memory_*`, `chat_*` and `drive_*`; never the ones that change
+workers or schedules or ask for a person. Its memories have no chat (`created_by_session` empty). In
+the repository's `.mcp.json`, with the key in the shell's environment rather than the file:
+
+```json
+{ "mcpServers": { "bob": { "type": "http", "url": "https://bob.box.badcode.tv/mcp",
+  "headers": { "Authorization": "Bearer ${BOB_MCP_KEY}" } } } }
+```
 
 **Memory** is labelled text with hybrid search: label selectors, Postgres full-text and pgvector
 embeddings (OpenAI, 1536 dimensions) fused by Reciprocal Rank Fusion. Memories are append-only:
