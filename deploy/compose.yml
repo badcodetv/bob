@@ -29,9 +29,9 @@ services:
       BOB_SESSION_SECRET: ${BOB_SESSION_SECRET:?}
       BOB_PROJECT_MAP: ${BOB_PROJECT_MAP:?}
       BOB_PUBLIC_URL: ${BOB_PUBLIC_URL:?}
-      BOB_PROJECTS: enc,marketing,wolf
+      BOB_PROJECTS: enc,badcode,wolf
       BOB_RUNTIME_TOKEN_ENC: ${BOB_RUNTIME_TOKEN_ENC:?}
-      BOB_RUNTIME_TOKEN_MARKETING: ${BOB_RUNTIME_TOKEN_MARKETING:?}
+      BOB_RUNTIME_TOKEN_BADCODE: ${BOB_RUNTIME_TOKEN_BADCODE:?}
       BOB_RUNTIME_TOKEN_WOLF: ${BOB_RUNTIME_TOKEN_WOLF:?}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?}  # memory embeddings (T21); the API will not start without it
       BOB_EMBEDDING_MODEL: ${BOB_EMBEDDING_MODEL:-}  # optional; empty = text-embedding-3-small
@@ -40,16 +40,16 @@ services:
       # only once some BOB_DRIVE_TOKEN_<NAME> is set (main.go is fatal in that case if these
       # are empty).
       BOB_ATTENTION_WEBHOOK_ENC: ${BOB_ATTENTION_WEBHOOK_ENC:-}  # optional; empty = no webhook (T23)
-      BOB_ATTENTION_WEBHOOK_MARKETING: ${BOB_ATTENTION_WEBHOOK_MARKETING:-}
+      BOB_ATTENTION_WEBHOOK_BADCODE: ${BOB_ATTENTION_WEBHOOK_BADCODE:-}
       BOB_ATTENTION_WEBHOOK_WOLF: ${BOB_ATTENTION_WEBHOOK_WOLF:-}
       BOB_DRIVE_CLIENT_ID: ${BOB_DRIVE_CLIENT_ID:-}
       BOB_DRIVE_CLIENT_SECRET: ${BOB_DRIVE_CLIENT_SECRET:-}
       BOB_DRIVE_TOKEN_ENC: ${BOB_DRIVE_TOKEN_ENC:-}
-      BOB_DRIVE_TOKEN_MARKETING: ${BOB_DRIVE_TOKEN_MARKETING:-}
+      BOB_DRIVE_TOKEN_BADCODE: ${BOB_DRIVE_TOKEN_BADCODE:-}
       # Optional: a project's MCP key, for Claude Code (or any MCP client) outside Bob to use that
       # project's tools at https://bob.box.badcode.tv/mcp. Empty = not reachable from outside.
       BOB_MCP_KEY_ENC: ${BOB_MCP_KEY_ENC:-}
-      BOB_MCP_KEY_MARKETING: ${BOB_MCP_KEY_MARKETING:-}
+      BOB_MCP_KEY_BADCODE: ${BOB_MCP_KEY_BADCODE:-}
       BOB_MCP_KEY_WOLF: ${BOB_MCP_KEY_WOLF:-}
     networks: [box-db, bob-projects]
     ports:
@@ -74,19 +74,19 @@ services:
     pids_limit: 4096
     stop_grace_period: 10m
 
-  bob-project-marketing:
+  bob-project-badcode:
     image: europe-west1-docker.pkg.dev/webkit-servers/bob/runtime:${TAG:?run ./stack deploy <tag>}
-    container_name: bob-project-marketing
+    container_name: bob-project-badcode
     init: true
     restart: unless-stopped
     environment:
-      BOB_PROJECT_NAME: marketing
-      BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_MARKETING:?}
+      BOB_PROJECT_NAME: badcode
+      BOB_RUNTIME_TOKEN: ${BOB_RUNTIME_TOKEN_BADCODE:?}
       BOB_API_URL: http://api:8070
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?}
-      GITHUB_TOKEN: ${GITHUB_TOKEN_MARKETING:?}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_BADCODE:?}
     volumes:
-      - bob-project-marketing:/project
+      - bob-project-badcode:/project
     networks: [bob-projects]
     mem_limit: 8g
     pids_limit: 4096
@@ -120,7 +120,7 @@ networks:
 volumes:
   bob-project-enc:
     external: true
-  bob-project-marketing:
+  bob-project-badcode:
     external: true
   bob-project-wolf:
     external: true

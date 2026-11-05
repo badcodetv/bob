@@ -20,7 +20,7 @@ stack         local development and `./stack deploy` (publish + ship) / `./stack
 
 ## Which projects exist
 
-`BOB_PROJECTS` lists them, comma-separated (`enc,marketing,wolf`). Each name needs a container
+`BOB_PROJECTS` lists them, comma-separated (`enc,badcode,wolf`). Each name needs a container
 declared in the same deploy's compose file and a `BOB_RUNTIME_TOKEN_<NAME>` (the name upper-cased,
 `-` as `_`, 32+ characters: `openssl rand -hex 32`); compose gives the container that same value as
 `BOB_RUNTIME_TOKEN`. A missing or short token stops the API at boot. The `projects` table is a
