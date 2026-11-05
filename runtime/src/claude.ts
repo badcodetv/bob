@@ -5,6 +5,9 @@ import { query, type EffortLevel } from '@anthropic-ai/claude-agent-sdk';
 import { turnEnv, type Turn, type TurnResult } from './turn.js';
 import { bobMcp } from './mcp.js';
 
+/** Claude Code settings every turn runs with: the Workflow tool on, sized for large fan-outs. */
+export const claudeSettings = { enableWorkflows: true, workflowSizeGuideline: 'large' } as const;
+
 export async function runClaudeTurn(turn: Turn, apiUrl: string, emit: (event: unknown) => void, signal: AbortSignal): Promise<TurnResult> {
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
@@ -28,6 +31,7 @@ export async function runClaudeTurn(turn: Turn, apiUrl: string, emit: (event: un
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
       skills: 'all',
+      settings: claudeSettings,
       abortController,
     },
   })) {

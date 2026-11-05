@@ -198,6 +198,11 @@ the calling chat's project): `worker_create/update/list/delete`, `project_prompt
 routes are admin-only), `memory_create/search/get/current`, `chat_list/read/search`,
 `drive_search/list/read/fetch` (when the project has a Drive token) and `request_human_attention`.
 
+**Workflows and `gh`.** Every Claude turn runs with Claude Code's Workflow tool switched on
+(`enableWorkflows`, size guideline `large`; `runtime/src/claude.ts`), so one chat can run a scripted
+fan-out of subagents. The runtime image carries the GitHub CLI, which reads `GITHUB_TOKEN` from the
+environment, so agents can open and read pull requests with `gh`.
+
 **From outside Bob.** A project with a `BOB_MCP_KEY_<NAME>` (32+ characters, `openssl rand -hex 32`)
 can be reached by any MCP client — Claude Code in a repository on a laptop — at
 `https://bob.box.badcode.tv/mcp` with `Authorization: Bearer <key>`. The key names the project and
